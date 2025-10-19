@@ -230,24 +230,32 @@ local function normalizeEntry(entry: InventoryEntry)
     local kind = identifyEntry(entry)
 
     if kind == EntryKind.CatalogItem then
+
         local ok, err = validateCatalogItem(entry)
         if not ok then
             return nil, err
         end
+
         return entry
+
     elseif kind == EntryKind.Fish then
+
         local clone = cloneFishEntry(entry)
         local ok, err = validateFishEntry(clone)
         if not ok then
             return nil, err
         end
+
         return clone
+
     elseif kind == EntryKind.Egg then
+
         local clone = cloneEggEntry(entry)
         local ok, err = validateEggEntry(clone)
         if not ok then
             return nil, err
         end
+
         return clone
     end
 
@@ -255,12 +263,15 @@ local function normalizeEntry(entry: InventoryEntry)
 end
 
 local function removeIf(items, predicate)
+
     for index, value in ipairs(items) do
+
         local shouldRemove, payload = predicate(value)
         if shouldRemove then
             table.remove(items, index)
             return true, payload
         end
+
     end
 
     return false
@@ -323,15 +334,19 @@ function InventoryManager:AddItemByName(player: Player, itemName: string, dataTy
     local entryId
 
     if dataType == "Furniture" then
+
         local furniture = FurnitureData[itemName]
         if not furniture then
             return false, ("Unknown furniture '%s'"):format(itemName)
         end
+
         entryId = itemName
+
     else
         if not ItemCatalog[itemName] then
             return false, ("Unknown catalog item '%s'"):format(itemName)
         end
+
         entryId = itemName
     end
 
@@ -339,6 +354,7 @@ function InventoryManager:AddItemByName(player: Player, itemName: string, dataTy
 end
 
 function InventoryManager:AddFish(player: Player, fishData)
+
     if typeof(fishData) ~= "table" then
         return false, "Invalid fish payload"
     end
@@ -356,6 +372,7 @@ function InventoryManager:AddFish(player: Player, fishData)
 end
 
 function InventoryManager:AddEgg(player: Player, eggData)
+
     if typeof(eggData) ~= "table" then
         return false, "Invalid egg payload"
     end
@@ -371,6 +388,7 @@ function InventoryManager:AddEgg(player: Player, eggData)
 end
 
 function InventoryManager:RemoveItem(player: Player, itemId: string)
+
     local items = self:GetItems(player)
     local removed = removeIf(items, function(value)
         return value == itemId
@@ -384,11 +402,14 @@ function InventoryManager:RemoveItem(player: Player, itemId: string)
 end
 
 function InventoryManager:RemoveFish(player: Player, fishId: string)
+
     local items = self:GetItems(player)
     local removed, data = removeIf(items, function(value)
+
         if typeof(value) == "table" and not value.Egg and value.Id == fishId then
             return true, value
         end
+
         return false
     end)
 
@@ -400,11 +421,13 @@ function InventoryManager:RemoveFish(player: Player, fishId: string)
 end
 
 function InventoryManager:RemoveEgg(player: Player, eggId: string)
+
     local items = self:GetItems(player)
     local removed, data = removeIf(items, function(value)
         if typeof(value) == "table" and value.Egg and value.Id == eggId then
             return true, value
         end
+
         return false
     end)
 
@@ -416,6 +439,7 @@ function InventoryManager:RemoveEgg(player: Player, eggId: string)
 end
 
 local function buildCatalogDetail(itemId)
+
     local furniture = FurnitureData[itemId]
     if furniture then
         return {
@@ -445,6 +469,7 @@ local function buildCatalogDetail(itemId)
 end
 
 local function buildFishDetail(entry)
+
     local fishConfig = FishData[entry.Type]
     if not fishConfig then
         return nil
@@ -464,6 +489,7 @@ local function buildFishDetail(entry)
 end
 
 local function buildEggDetail(entry)
+
     local fishConfig = FishData[entry.Type]
     if not fishConfig then
         return nil
@@ -480,6 +506,7 @@ local function buildEggDetail(entry)
 end
 
 local function matchesCategory(detail, category)
+
     if category == nil or category == "All" then
         return true
     end
@@ -496,6 +523,7 @@ local function matchesCategory(detail, category)
 end
 
 function InventoryManager:GetDetailedItems(player: Player, category: string?)
+    
     local detailed = {}
     local rawItems = self:GetItems(player)
 
