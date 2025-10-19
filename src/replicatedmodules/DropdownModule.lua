@@ -1,190 +1,205 @@
-local Players          = game:GetService("Players")
+--!strict
+--[[
+        DropdownModule
+        Contextual dropdown implementation that renders options under an anchor
+        button. Handles outside clicks, re-entrant toggles, and safe cleanup.
+]]
+
 local UserInputService = game:GetService("UserInputService")
+
+export type DropdownOption = string | number | boolean | { Text: string, Value: any }
+export type DropdownConfig = {
+        AdorneeGui: GuiBase2d,
+        Anchor: GuiButton,
+        Options: { DropdownOption },
+        Callback: (value: any) -> (),
+        Width: number?,
+        OptionHeight: number?,
+        Offset: Vector2?,
+}
 
 local DropdownModule = {}
 DropdownModule.__index = DropdownModule
 
--- Registry global des dropdowns ouverts
-local OpenDropdowns = setmetatable({}, { __mode = "k" })
-local GlobalOutsideConn = nil
+local activeDropdowns: { [DropdownModule]: boolean } = setmetatable({}, { __mode = "k" })
+local outsideClickConnection: RBXScriptConnection?
 
--- Ferme tous les dropdowns sauf "except"
-local function closeAll(except)
-	
-	for inst in pairs(OpenDropdowns) do
-		if inst ~= except then
-			inst:Hide()
-		end
-	end
+local function optionTuple(option: DropdownOption): (string, any)
+        if typeof(option) == "table" then
+                local map = option :: { Text: string?, Value: any }
+                local text = map.Text or tostring(map.Value)
+                return text, map.Value
+        end
+
+        return tostring(option), option
 end
 
--- Verifie si un point (x,y) est dans un GuiObject
-local function isInside(guiObject, x, y)
-	
-	if not guiObject or not guiObject:IsA("GuiObject") then
-		return false end
-	
-	local absPos = guiObject.AbsolutePosition
-	local absSize = guiObject.AbsoluteSize
-	
-	return (x >= absPos.X and x <= absPos.X + absSize.X
-		and y >= absPos.Y and y <= absPos.Y + absSize.Y)
+local function isPointInside(guiObject: GuiBase2d, x: number, y: number): boolean
+        local position = guiObject.AbsolutePosition
+        local size = guiObject.AbsoluteSize
+
+        return x >= position.X
+                and x <= position.X + size.X
+                and y >= position.Y
+                and y <= position.Y + size.Y
 end
 
--- Ajoute un ecouteur global unique pour fermer au clic hors dropdown
-local function ensureGlobalOutsideListener()
-	if GlobalOutsideConn then return end
+local function ensureOutsideClickListener()
+        if outsideClickConnection then
+                return
+        end
 
-	GlobalOutsideConn = UserInputService.InputBegan:Connect(function(input, gpe)
-		if gpe or input.UserInputType ~= Enum.UserInputType.MouseButton1 then return end
+        outsideClickConnection = UserInputService.InputBegan:Connect(function(input, processed)
+                if processed or input.UserInputType ~= Enum.UserInputType.MouseButton1 then
+                        return
+                end
 
-		local x, y = input.Position.X, input.Position.Y
-		local hitOpen = false
+                local position = input.Position
+                for dropdown in pairs(activeDropdowns) do
+                        local frame = dropdown._frame
+                        local anchor = dropdown.Anchor
+                        if frame and anchor then
+                                if isPointInside(frame, position.X, position.Y)
+                                        or isPointInside(anchor, position.X, position.Y)
+                                then
+                                        return
+                                end
+                        end
+                end
 
-		for inst in pairs(OpenDropdowns) do
-			if isInside(inst.Frame, x, y) or isInside(inst.Anchor, x, y) then
-				hitOpen = true
-				break
-			end
-		end
-
-		if not hitOpen then
-			closeAll(nil) -- ferme tout
-		end
-	end)
+                for dropdown in pairs(activeDropdowns) do
+                        dropdown:Hide()
+                end
+        end)
 end
 
--- ================= API =================
+function DropdownModule.new(config: DropdownConfig)
+        assert(config.AdorneeGui, "DropdownModule: missing AdorneeGui")
+        assert(config.Anchor, "DropdownModule: missing Anchor button")
+        assert(config.Options and #config.Options > 0, "DropdownModule: Options list is empty")
+        assert(type(config.Callback) == "function", "DropdownModule: Callback must be a function")
 
-function DropdownModule.new(config)
-	assert(config.AdorneeGui, "AdorneeGui obligatoire")
-	assert(config.Anchor, "Anchor obligatoire")
-	assert(config.Options and #config.Options > 0, "Options requises")
-	assert(type(config.Callback) == "function", "Callback obligatoire")
+        local self = setmetatable({}, DropdownModule)
+        self.Gui = config.AdorneeGui
+        self.Anchor = config.Anchor
+        self.Options = config.Options
+        self.Callback = config.Callback
+        self.Width = config.Width or 160
+        self.OptionHeight = config.OptionHeight or 28
+        self.Offset = config.Offset or Vector2.zero
 
-	local self = setmetatable({}, DropdownModule)
-	self.Gui          = config.AdorneeGui
-	self.Anchor       = config.Anchor
-	self.Options      = config.Options
-	self.Callback     = config.Callback
-	self.Width        = config.Width or 120
-	self.OptionHeight = config.OptionHeight or 30
-	self.Offset       = config.Offset or Vector2.new(0, 0)
+        self:_createDropdown()
+        ensureOutsideClickListener()
 
-	self:_buildDropdown()
-	ensureGlobalOutsideListener()
-
-	return self
+        return self
 end
 
-function DropdownModule:_buildDropdown()
-	local frame = Instance.new("Frame")
-	frame.Name = "DropdownMenu"
-	frame.Size = UDim2.new(0, self.Width, 0, 0)
-	frame.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
-	frame.BorderSizePixel = 0
-	frame.ClipsDescendants = true
-	frame.ZIndex = (self.Anchor.ZIndex or 1) + 10
-	frame.Visible = false
-	frame.Parent = self.Gui
-	self.Frame = frame
+function DropdownModule:_createDropdown()
+        local frame = Instance.new("Frame")
+        frame.Name = "DropdownMenu"
+        frame.BackgroundColor3 = Color3.fromRGB(28, 28, 28)
+        frame.BorderSizePixel = 0
+        frame.ClipsDescendants = true
+        frame.AutomaticSize = Enum.AutomaticSize.Y
+        frame.Size = UDim2.new(0, self.Width, 0, 0)
+        frame.ZIndex = (self.Anchor.ZIndex or 1) + 10
+        frame.Visible = false
+        frame.Parent = self.Gui
 
-	-- Layout
-	local layout = Instance.new("UIListLayout")
-	layout.Parent = frame
-	layout.SortOrder = Enum.SortOrder.LayoutOrder
-	layout.Padding = UDim.new(0, 2)
+        local layout = Instance.new("UIListLayout")
+        layout.Padding = UDim.new(0, 2)
+        layout.SortOrder = Enum.SortOrder.LayoutOrder
+        layout.Parent = frame
 
-	-- Options
-	for i, opt in ipairs(self.Options) do
-		
-		local text, value = tostring(opt), opt
-		if type(opt) == "table" then
-			text  = opt.Text or tostring(opt.Value)
-			value = opt.Value
-		end
+        for index, option in ipairs(self.Options) do
+                local text, value = optionTuple(option)
+                local button = Instance.new("TextButton")
+                button.Name = string.format("Option_%s", text)
+                button.LayoutOrder = index
+                button.Size = UDim2.new(1, 0, 0, self.OptionHeight)
+                button.BackgroundColor3 = Color3.fromRGB(45, 45, 45)
+                button.BorderSizePixel = 0
+                button.Font = Enum.Font.Gotham
+                button.TextSize = 16
+                button.Text = text
+                button.TextColor3 = Color3.new(1, 1, 1)
+                button.AutoButtonColor = true
+                button.ZIndex = frame.ZIndex + 1
+                button.Parent = frame
 
-		local btn = Instance.new("TextButton")
-		btn.Name = "Option_" .. text
-		btn.Size = UDim2.new(1, 0, 0, self.OptionHeight)
-		btn.BackgroundColor3 = Color3.fromRGB(50, 50, 50)
-		btn.BorderSizePixel = 0
-		btn.Font = Enum.Font.Gotham
-		btn.TextSize = 18
-		btn.Text = text
-		btn.TextColor3 = Color3.fromRGB(255, 255, 255)
-		btn.LayoutOrder = i
-		btn.Parent = frame
+                button.MouseButton1Click:Connect(function()
+                        self.Callback(value)
+                        self:Hide()
+                end)
+        end
 
-		btn.MouseButton1Click:Connect(function()
-			self.Callback(value)
-			self:Hide()
-		end)
-	end
+        self._frame = frame
+        self:_bindAnchor()
+end
 
-	-- Ajuste la hauteur totale
-	local count = #self.Options
-	local totalHeight = count * self.OptionHeight + math.max(0, count - 1) * layout.Padding.Offset
-	frame.Size = UDim2.new(0, self.Width, 0, totalHeight)
+function DropdownModule:_bindAnchor()
+        self._anchorConnection = self.Anchor.MouseButton1Click:Connect(function()
+                if self:IsOpen() then
+                        self:Hide()
+                else
+                        self:Show()
+                end
+        end)
+end
 
-	-- Toggle via l'ancre
-	self.Connection = self.Anchor.MouseButton1Click:Connect(function()
-		if frame.Visible then
-			self:Hide()
-		else
-			self:Show()
-		end
-	end)
+function DropdownModule:IsOpen(): boolean
+        return self._frame ~= nil and self._frame.Visible
 end
 
 function DropdownModule:Show()
-	closeAll(self)
+        local frame = self._frame
+        if not frame then
+                return
+        end
 
-	local anchorPos  = self.Anchor.AbsolutePosition
-	local anchorSize = self.Anchor.AbsoluteSize
+        for dropdown in pairs(activeDropdowns) do
+                if dropdown ~= self then
+                        dropdown:Hide()
+                end
+        end
 
-	-- Place le menu juste sous l'ancre
-	local x = anchorPos.X + self.Offset.X
-	local y = anchorPos.Y + anchorSize.Y + self.Offset.Y
-
-	self.Frame.Position = UDim2.fromOffset(x, y)
-	self.Frame.Visible = true
-	OpenDropdowns[self] = true
+        local anchorPos = self.Anchor.AbsolutePosition
+        local anchorSize = self.Anchor.AbsoluteSize
+        frame.Position = UDim2.fromOffset(anchorPos.X + self.Offset.X, anchorPos.Y + anchorSize.Y + self.Offset.Y)
+        frame.Visible = true
+        activeDropdowns[self] = true
 end
 
 function DropdownModule:Hide()
-	if self.Frame then
-		self.Frame.Visible = false
-	end
-	OpenDropdowns[self] = nil
+        local frame = self._frame
+        if frame then
+                        frame.Visible = false
+        end
+        activeDropdowns[self] = nil
 end
 
 function DropdownModule:Enable()
-	if not self.Connection then
-		self.Connection = self.Anchor.MouseButton1Click:Connect(function()
-			if self.Frame.Visible then
-				self:Hide()
-			else
-				self:Show()
-			end
-		end)
-	end
+        if not self._anchorConnection then
+                self:_bindAnchor()
+        end
 end
 
 function DropdownModule:Disable()
-	if self.Connection then
-		self.Connection:Disconnect()
-		self.Connection = nil
-	end
-	self:Hide()
+        if self._anchorConnection then
+                self._anchorConnection:Disconnect()
+                self._anchorConnection = nil
+        end
+        self:Hide()
 end
 
 function DropdownModule:Destroy()
-	self:Disable()
-	if self.Frame then
-		self.Frame:Destroy()
-		self.Frame = nil
-	end
+        self:Disable()
+        local frame = self._frame
+        if frame then
+                frame:Destroy()
+                self._frame = nil
+        end
+        activeDropdowns[self] = nil
 end
 
 return DropdownModule
