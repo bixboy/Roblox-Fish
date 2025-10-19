@@ -1,85 +1,109 @@
--- module InteractionHelper.lua
+--!strict
+--[[
+        InteractionHelper
+        Utility object that temporarily disables collisions on models or parts
+        and restores them on demand. Designed for placement/interaction flows.
+]]
+
 local InteractionHelper = {}
 InteractionHelper.__index = InteractionHelper
 
-function InteractionHelper.new()
-	
-	local self = setmetatable({
-		_disabledParts = {}
-	}, InteractionHelper)
-	
-	return self
+export type InteractionHelper = {
+        _disabledParts: { [BasePart]: { CanCollide: boolean, CanQuery: boolean, CanTouch: boolean } },
+        DisableCollision: (self: InteractionHelper, part: BasePart) -> (),
+        DisableModel: (self: InteractionHelper, model: Instance, excludes: { Instance }?) -> (),
+        Restore: (self: InteractionHelper, part: BasePart) -> (),
+        RestoreAll: (self: InteractionHelper) -> (),
+}
+
+function InteractionHelper.new(): InteractionHelper
+        return setmetatable({
+                _disabledParts = {},
+        }, InteractionHelper)
 end
 
--- Desactive la collision
-function InteractionHelper:disableCollision(part)
-	
-	if not part:IsA("BasePart") then return end
-	if self._disabledParts[part] then return end
-	
-	-- Sauvegarde
-	self._disabledParts[part] = {
-		oldCanCollide = part.CanCollide,
-		oldCanQuery   = part.CanQuery,
-	}
-	
-	-- Desactivation
-	part.CanCollide = false
-	part.CanQuery   = false
-end
--- Applique disableCollision
-function InteractionHelper:disableModel(model, excludes)
-	
-	excludes = excludes or {}
-
-	for _, part in ipairs(model:GetDescendants()) do
-		
-		if not part:IsA("BasePart") then
-			continue
-		end
-
-		local skip = false
-		for _, ex in ipairs(excludes) do
-			
-			if ex:IsA("Model") then
-				
-				if part:IsDescendantOf(ex) then
-					skip = true
-					break
-				end
-				
-			elseif ex:IsA("BasePart") then
-				
-				if part == ex then
-					skip = true
-					break
-				end
-				
-			end
-			
-		end
-
-		if not skip then
-			self:disableCollision(part)
-		end
-	end
-	
+local function isPartDisabled(self: InteractionHelper, part: BasePart): boolean
+        return self._disabledParts[part] ~= nil
 end
 
--- Restaure TOUS les parts qu'on a desactives
-function InteractionHelper:restoreAll()
-	
-	for part, data in pairs(self._disabledParts) do
-		
-		if part and part.Parent then
-			
-			part.CanCollide = data.oldCanCollide
-			part.CanQuery   = data.oldCanQuery
-		end
-	end
-	
-	-- vider la table
-	self._disabledParts = {}
+local function storeState(self: InteractionHelper, part: BasePart)
+        self._disabledParts[part] = {
+                CanCollide = part.CanCollide,
+                CanQuery = part.CanQuery,
+                CanTouch = part.CanTouch,
+        }
+end
+
+function InteractionHelper:DisableCollision(part: BasePart)
+        if not part or not part:IsA("BasePart") then
+                return
+        end
+
+        if isPartDisabled(self, part) then
+                return
+        end
+
+        storeState(self, part)
+        part.CanCollide = false
+        part.CanQuery = false
+        part.CanTouch = false
+end
+
+local function shouldExclude(part: BasePart, excludes: { Instance }?): boolean
+        if not excludes then
+                return false
+        end
+
+        for _, exclude in ipairs(excludes) do
+                if exclude == part then
+                        return true
+                end
+
+                if exclude:IsA("Model") and part:IsDescendantOf(exclude) then
+                        return true
+                end
+        end
+
+        return false
+end
+
+function InteractionHelper:DisableModel(model: Instance, excludes: { Instance }?)
+        if not model then
+                return
+        end
+
+        for _, descendant in ipairs(model:GetDescendants()) do
+                if descendant:IsA("BasePart") and not shouldExclude(descendant, excludes) then
+                        self:DisableCollision(descendant)
+                end
+        end
+end
+
+function InteractionHelper:Restore(part: BasePart)
+        local original = self._disabledParts[part]
+        if not original then
+                return
+        end
+
+        if part and part.Parent then
+                part.CanCollide = original.CanCollide
+                part.CanQuery = original.CanQuery
+                part.CanTouch = original.CanTouch
+        end
+
+        self._disabledParts[part] = nil
+end
+
+function InteractionHelper:RestoreAll()
+        for part, data in pairs(self._disabledParts) do
+                if part and part.Parent then
+                        part.CanCollide = data.CanCollide
+                        part.CanQuery = data.CanQuery
+                        part.CanTouch = data.CanTouch
+                end
+        end
+
+        table.clear(self._disabledParts)
 end
 
 return InteractionHelper

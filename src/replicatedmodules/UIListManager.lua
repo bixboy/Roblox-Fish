@@ -1,197 +1,208 @@
--- UIListManager.lua
+--!strict
+--[[
+        UIListManager
+        Declarative helper for rendering lists of buttons/items inside scrolling
+        frames. Handles connection cleanup, stacking, custom rendering, and
+        auto-closing logic for modal panels.
+]]
+
 local UIListManager = {}
 
--- Garde les connexions actives pour chaque frame
-local activeConnections = {}
+export type RenderParams = {
+        UiFrame: GuiObject | ScreenGui,
+        Template: GuiObject,
+        CloseButton: GuiButton,
+        ListContainer: Instance?,
+        GetItems: () -> { any }?,
+        OnItemClick: (itemData: any) -> (),
+        OnClose: () -> (),
+        RenderItem: ((button: GuiObject, itemData: any) -> ())?,
+        AutoClose: boolean?,
+        ColorButton: Color3?,
+        StackItems: boolean?,
+}
 
--- Nettoie les anciennes connexions
-local function disconnectConnections(uiFrame)
-	
-	if activeConnections[uiFrame] then
-		for _, conn in ipairs(activeConnections[uiFrame]) do
-			conn:Disconnect()
-		end
-	end
-	
-	activeConnections[uiFrame] = {}
+local trackedConnections: { [Instance]: { RBXScriptConnection } } = {}
+
+local function ensureConnectionBucket(container: Instance)
+        if not trackedConnections[container] then
+                trackedConnections[container] = {}
+        end
 end
 
--- Ajoute une connexion traquee
-local function track(uiFrame, conn)
-	table.insert(activeConnections[uiFrame], conn)
-	return conn
+local function bind(container: Instance, connection: RBXScriptConnection)
+        ensureConnectionBucket(container)
+        table.insert(trackedConnections[container], connection)
+        return connection
 end
 
--- Supprime tous les anciens items
-local function clearList(listContainer, template)
-	for _, child in ipairs(listContainer:GetChildren()) do
-		if child:IsA("GuiObject") and child ~= template then
-			child:Destroy()
-		end
-	end
+local function disconnectTracked(container: Instance)
+        local connections = trackedConnections[container]
+        if not connections then
+                return
+        end
+
+        for _, connection in ipairs(connections) do
+                connection:Disconnect()
+        end
+
+        table.clear(connections)
 end
 
--- Fonction utilitaire pour stacker
-local function isGuid(str)
-	
-	if type(str) ~= "string" then return false end
-
-	str = str:match("^%s*(.-)%s*$")
-	if #str >= 2 and str:sub(1,1) == "{" and str:sub(-1) == "}" then
-		str = str:sub(2, -2) end
-
-	if str:match("^%x%x%x%x%x%x%x%x%-%x%x%x%x%-%x%x%x%x%-%x%x%x%x%-%x%x%x%x%x%x%x%x%x%x%x%x$") then
-		return true
-	end
-
-	if #str == 32 and str:match("^%x+$") then
-		return true
-	end
-
-	return false
+local function clearList(container: Instance, template: GuiObject)
+        for _, child in ipairs(container:GetChildren()) do
+                if child ~= template and child:IsA("GuiObject") then
+                        child:Destroy()
+                end
+        end
 end
 
-local function stackItems(items)
-	
-	local stacked = {}
-	local lookup  = {}
-	
-	for _, v in ipairs(items) do
-		
-		if v.Id and isGuid(v.Id) then
-			local new = table.clone(v)
-			new.Count = 1
-			table.insert(stacked, new)
-			
-		else
-			
-			local key = v.Id or v.Text or v.Name or tostring(v)
-			if lookup[key] then
-				lookup[key].Count = lookup[key].Count + 1
-			else
-				local new = table.clone(v)
-				new.Count = 1
-				
-				table.insert(stacked, new)
-				lookup[key] = new
-			end
-		end
-	end
-
-	return stacked
+local function sanitizeGuid(value: string): string
+        local trimmed = value:match("^%s*(.-)%s*$")
+        if trimmed:sub(1, 1) == "{" and trimmed:sub(-1) == "}" then
+                trimmed = trimmed:sub(2, -2)
+        end
+        return trimmed
 end
 
--- ================================
--- Public API
--- ================================
-function UIListManager.SetupList(params)
-	local uiFrame        = params.UiFrame
-	local template       = params.Template
-	local closeButton    = params.CloseButton
-	local getItems       = params.GetItems        or function() return {} end
-	local onItemClick    = params.OnItemClick     or function() end
-	local onClose        = params.OnClose         or function() end
-	local renderItem     = params.RenderItem
-	local autoClose      = params.AutoClose ~= false
-	local colorButton    = params.ColorButton
-	local listContainer  = params.ListContainer or template.Parent
-	local stackEnabled   = params.StackItems
+local function isGuid(value: unknown): boolean
+        if typeof(value) ~= "string" then
+                return false
+        end
 
-	assert(uiFrame and template and closeButton, "[UIListManager] param�tres invalides")
+        local normalized = sanitizeGuid(value)
+        return normalized:match("^%x%x%x%x%x%x%x%x%-%x%x%x%x%-%x%x%x%x%-%x%x%x%x%-%x%x%x%x%x%x%x%x%x%x%x%x$") ~= nil
+                or (#normalized == 32 and normalized:match("^%x+$") ~= nil)
+end
 
-	-- Reset
-	disconnectConnections(uiFrame)
-	clearList(listContainer, template)
-	template.Visible = false
-	
-	if uiFrame:IsA("Frame") then 
-		
-		uiFrame.Visible  = true 
-	
-	elseif uiFrame:IsA("ScreenGui") then
-		
-		uiFrame.Enabled = true
-	end
+local function cloneItemData(itemData: any)
+        if type(itemData) == "table" then
+                return table.clone(itemData)
+        end
 
-	-- Bouton de fermeture
-	track(uiFrame, closeButton.MouseButton1Click:Connect(function()
+        return { Value = itemData }
+end
 
-		if uiFrame:IsA("Frame") then 
+local function buildStack(items: { any }): { any }
+        local aggregated: { any } = {}
+        local lookup: { [string]: any } = {}
 
-			uiFrame.Visible  = false 
+        for _, item in ipairs(items) do
+                local entry = cloneItemData(item)
+                entry.Count = entry.Count or 1
 
-		elseif uiFrame:IsA("ScreenGui") then
+                if entry.Id and isGuid(entry.Id) then
+                        table.insert(aggregated, entry)
+                        continue
+                end
 
-			uiFrame.Enabled = false
-		end
-		onClose()
-	end))
-	
-	local items = getItems()
-	if stackEnabled then
-		items = stackItems(items)
-	end
-	
-	-- Creation des items
-	for _, itemData in ipairs(items) do
-		
-		local button = template:Clone()
-		button.Visible = true
-		button.Parent  = listContainer
+                local key = entry.Id or entry.Text or entry.Name or tostring(entry)
+                local existing = lookup[key]
+                if existing then
+                        existing.Count += entry.Count
+                else
+                        lookup[key] = entry
+                        table.insert(aggregated, entry)
+                end
+        end
 
-		if colorButton then
-			button.BackgroundColor3 = colorButton
-		end
+        return aggregated
+end
 
-		-- Rendu custom ou fallback
-		if renderItem then
-			renderItem(button, itemData)
-		else
-			
-			if button:IsA("TextButton") or button:IsA("TextLabel") then
-				
-				local txt = itemData.Text or itemData.Name or tostring(itemData.Id) or "Item"
-				if stackEnabled and itemData.Count and itemData.Count > 1 then
-					
-					button.Text = ("%s x%d"):format(txt, itemData.Count)
-				else
-					button.Text = itemData.Text or "Item"
-				end
-			else
-				
-				local label = button:FindFirstChild("NameLabel") or button:FindFirstChildWhichIsA("TextLabel")
-				if label then
-					
-					local txt = itemData.Text or itemData.Name or tostring(itemData.Id) or "Item"
-					if stackEnabled and itemData.Count and itemData.Count > 1 then
-						
-						label.Text = ("%s x%d"):format(txt, itemData.Count)
-					else
-						label.Text = txt
-					end
-				end
-			end
-		end
+local function setFrameVisibility(frame: GuiObject | ScreenGui, isVisible: boolean)
+        if frame:IsA("ScreenGui") then
+                frame.Enabled = isVisible
+        else
+                frame.Visible = isVisible
+        end
+end
 
-		-- Clic sur l'item
-		track(uiFrame, button.MouseButton1Click:Connect(function()
-			
-			onItemClick(itemData)
-			
-			if autoClose then
+local function defaultGetItems(): { any }
+        return {}
+end
 
-				if uiFrame:IsA("Frame") then 
+local function defaultOnItemClick(_: any)
+end
 
-					uiFrame.Visible  = false 
+local function defaultOnClose()
+end
 
-				elseif uiFrame:IsA("ScreenGui") then
+function UIListManager.Close(uiFrame: GuiObject | ScreenGui)
+        setFrameVisibility(uiFrame, false)
+        disconnectTracked(uiFrame)
+end
 
-					uiFrame.Enabled = false
-				end
-				onClose()
-			end
-		end))
-	end
+function UIListManager.SetupList(params: RenderParams)
+        local uiFrame = params.UiFrame
+        local template = params.Template
+        local closeButton = params.CloseButton
+
+        assert(uiFrame, "[UIListManager] UiFrame is required")
+        assert(template, "[UIListManager] Template is required")
+        assert(closeButton, "[UIListManager] CloseButton is required")
+
+        local listContainer = params.ListContainer or template.Parent
+        local getItems = params.GetItems or defaultGetItems
+        local onItemClick = params.OnItemClick or defaultOnItemClick
+        local onClose = params.OnClose or defaultOnClose
+        local renderItem = params.RenderItem
+        local autoClose = params.AutoClose ~= false
+        local colorButton = params.ColorButton
+        local stackItems = params.StackItems == true
+
+        disconnectTracked(uiFrame)
+        ensureConnectionBucket(uiFrame)
+
+        clearList(listContainer, template)
+        template.Visible = false
+        setFrameVisibility(uiFrame, true)
+
+        bind(uiFrame, closeButton.MouseButton1Click:Connect(function()
+                setFrameVisibility(uiFrame, false)
+                onClose()
+                disconnectTracked(uiFrame)
+        end))
+
+        local items = getItems() or {}
+        if stackItems then
+                items = buildStack(items)
+        end
+
+        for _, itemData in ipairs(items) do
+                local button = template:Clone()
+                button.Visible = true
+                button.Parent = listContainer
+
+                if colorButton then
+                        (button :: GuiObject & { BackgroundColor3: Color3 }).BackgroundColor3 = colorButton
+                end
+
+                if renderItem then
+                        renderItem(button, itemData)
+                else
+                        local label: TextLabel? = button:IsA("TextButton") and button :: any
+                                or button:FindFirstChildWhichIsA("TextLabel")
+                        local text = itemData.Text or itemData.Name or tostring(itemData.Id or "Item")
+                        if stackItems and itemData.Count and itemData.Count > 1 then
+                                text = string.format("%s x%d", text, itemData.Count)
+                        end
+
+                        if button:IsA("TextButton") or button:IsA("TextLabel") then
+                                (button :: TextButton).Text = text
+                        elseif label then
+                                label.Text = text
+                        end
+                end
+
+                bind(uiFrame, button.MouseButton1Click:Connect(function()
+                        onItemClick(itemData)
+                        if autoClose then
+                                setFrameVisibility(uiFrame, false)
+                                onClose()
+                                disconnectTracked(uiFrame)
+                        end
+                end))
+        end
 end
 
 return UIListManager

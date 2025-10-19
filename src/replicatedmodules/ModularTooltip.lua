@@ -1,165 +1,238 @@
--- ReplicatedStorage.Modules.TooltipModule
-local Players           = game:GetService("Players")
-local TweenService      = game:GetService("TweenService")
-local UserInputService  = game:GetService("UserInputService")
+--!strict
+--[[
+        ModularTooltip
+        Runtime tooltip/quick action panel used by multiple systems. Provides a
+        reusable class with slide/fade animations and safe cleanup.
+]]
+
+local Players = game:GetService("Players")
+local TweenService = game:GetService("TweenService")
+local UserInputService = game:GetService("UserInputService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
--- Reference du prefab de tooltip dans ReplicatedStorage
-local tooltipPrefab = ReplicatedStorage.UI:WaitForChild("ToolTipGui")
+export type TooltipButton = {
+        Text: string?,
+        Callback: ((buttonData: TooltipButton) -> ())?,
+}
+
+export type TooltipConfig = {
+        Position: Vector2,
+        Buttons: { TooltipButton },
+        Render: ((button: TextButton, buttonData: TooltipButton) -> ())?,
+}
+
+export type TooltipClass = {
+        Hide: (self: TooltipClass) -> (),
+        HideImmediate: (self: TooltipClass) -> (),
+        Show: (self: TooltipClass, config: TooltipConfig) -> (),
+        Destroy: (self: TooltipClass) -> (),
+        IsVisible: (self: TooltipClass) -> boolean,
+}
+
+local TOOLTIP_PREFAB = ReplicatedStorage.UI:WaitForChild("ToolTipGui")
+local SLIDE_TIME = 0.2
+local FADE_TIME = 0.2
+local BUTTON_PADDING = 6
 
 local Tooltip = {}
 Tooltip.__index = Tooltip
 
--- Animation settings
-local SLIDE_TIME = 0.2
-local FADE_TIME  = 0.2
-local PADDING    = 8
+function Tooltip.new(playerGui: PlayerGui?): TooltipClass
+        local guiParent = playerGui or Players.LocalPlayer:WaitForChild("PlayerGui")
 
-function Tooltip.new()
-	local self = setmetatable({}, Tooltip)
+        local self = setmetatable({
+                _gui = TOOLTIP_PREFAB:Clone(),
+                _buttonsFrame = nil :: Frame?,
+                _template = nil :: TextButton?,
+                _inputConnection = nil :: RBXScriptConnection?,
+                _visible = false,
+        }, Tooltip)
 
-	-- Clone dans le PlayerGui
-	local playerGui = Players.LocalPlayer:WaitForChild("PlayerGui")
-	local gui = tooltipPrefab:Clone()
-	gui.Name = "TooltipRuntime"
-	gui.Parent = playerGui
+        self._gui.Name = "Tooltip"
+        self._gui.ResetOnSpawn = false
+        self._gui.Parent = guiParent
 
-	self.UI         = gui
-	self.Frame      = gui:WaitForChild("Background")
-	self.Buttons    = self.Frame:WaitForChild("ButtonsFrame")
-	self.Template   = self.Buttons:WaitForChild("ButtonTemplate")
+        local background = self._gui:WaitForChild("Background") :: Frame
+        local buttons = background:WaitForChild("ButtonsFrame") :: Frame
+        local template = buttons:WaitForChild("ButtonTemplate") :: TextButton
 
-	self.IsVisible  = false
-	self._inputConn = nil	
+        self._background = background
+        self._buttonsFrame = buttons
+        self._template = template
 
-	self:HideImmediate()
-	return self
+        self:HideImmediate()
+
+        return self
 end
 
--- Immediately hide without animation
+local function clearButtons(self: TooltipClass)
+        local buttons = assert(self._buttonsFrame, "Tooltip missing buttons frame")
+        local template = assert(self._template, "Tooltip missing template")
+
+        for _, child in ipairs(buttons:GetChildren()) do
+                if child:IsA("GuiObject") and child ~= template then
+                        child:Destroy()
+                end
+        end
+end
+
 function Tooltip:HideImmediate()
-	self.UI.Enabled = false
-	self.IsVisible = false
-
-	if self._inputConn then
-		self._inputConn:Disconnect()
-		self._inputConn = nil
-	end
-
-	-- cleanup
-	for _, child in ipairs(self.Buttons:GetChildren()) do
-		if child:IsA("GuiObject") and child ~= self.Template then
-			child:Destroy()
-		end
-	end
+        clearButtons(self)
+        self._gui.Enabled = false
+        self._visible = false
+        if self._inputConnection then
+                self._inputConnection:Disconnect()
+                self._inputConnection = nil
+        end
 end
 
-function Tooltip:_onGlobalClick(input, gameProcessed)
-	if gameProcessed then return end
-	if input.UserInputType == Enum.UserInputType.MouseButton1 then
-		self:Hide()
-	end
+function Tooltip:IsVisible(): boolean
+        return self._visible
 end
 
--- Show
-function Tooltip:Show(config)
-	if not (config and config.Position and config.Buttons) then 
-		return 
-	end
+function Tooltip:Show(config: TooltipConfig)
+        assert(config.Position, "Tooltip.Show requires Position")
+        assert(config.Buttons and #config.Buttons > 0, "Tooltip.Show requires at least one button")
 
-	-- cleanup
-	for _, child in ipairs(self.Buttons:GetChildren()) do
-		if child:IsA("GuiObject") and child ~= self.Template then
-			child:Destroy()
-		end
-	end
+        clearButtons(self)
 
-	-- create buttons
-	local totalHeight = 0
-	for i, btnData in ipairs(config.Buttons) do
-		local btn = self.Template:Clone()
-		btn.Visible  = true
-		btn.Parent   = self.Buttons
-		btn.Position = UDim2.new(0, 0, 0, (i-1) * (btn.Size.Y.Offset + PADDING))
+        local buttonsFrame = assert(self._buttonsFrame, "Tooltip missing buttons frame")
+        local template = assert(self._template, "Tooltip missing template")
+        local background = assert(self._background, "Tooltip missing background")
 
-		btn.Active = true
-		btn.Selectable = true
-		btn.AutoButtonColor = true
-		btn.TextTransparency = 1
+        local totalHeight = 0
+        for index, buttonData in ipairs(config.Buttons) do
+                local button = template:Clone()
+                button.Visible = true
+                button.Parent = buttonsFrame
+                button.ZIndex = background.ZIndex + 1
+                button.TextTransparency = 1
+                button.BackgroundTransparency = 1
 
-		if config.Render then
-			config.Render(btn, btnData)
-		else
-			btn.Text = btnData.Text or "?"
-		end
+                if config.Render then
+                        config.Render(button, buttonData)
+                else
+                        button.Text = buttonData.Text or "?"
+                end
 
-		btn.MouseButton1Click:Connect(function()
-			pcall(btnData.Callback, btnData)
-			self:Hide()
-		end)
+                button.MouseButton1Click:Connect(function()
+                        if buttonData.Callback then
+                                task.spawn(buttonData.Callback, buttonData)
+                        end
+                        self:Hide()
+                end)
 
-		if not self._inputConn then
-			self._inputConn = UserInputService.InputBegan:Connect(function(input, gameProcessed)
-				self:_onGlobalClick(input, gameProcessed)
-			end)
-		end
+                button.Position = UDim2.fromOffset(0, totalHeight)
+                totalHeight += button.Size.Y.Offset + BUTTON_PADDING
+        end
 
-		totalHeight = totalHeight + btn.Size.Y.Offset + PADDING
-	end
+        background.Size = UDim2.new(0, background.Size.X.Offset, 0, totalHeight + BUTTON_PADDING * 2)
 
-	local padding_total = PADDING * 2
-	self.Frame.Size     = UDim2.new(0, self.Frame.Size.X.Offset, 0, totalHeight + padding_total)
+        local start = UDim2.fromOffset(config.Position.X, config.Position.Y - background.Size.Y.Offset)
+        local finish = UDim2.fromOffset(config.Position.X, config.Position.Y)
 
-	local pos = config.Position
-	local startPos = UDim2.fromOffset(pos.X, pos.Y - (totalHeight + padding_total))
-	local endPos   = UDim2.fromOffset(pos.X, pos.Y)
+        background.Position = start
+        self._gui.Enabled = true
+        self._visible = true
 
-	self.Frame.Position = startPos
-	self.UI.Enabled     = true
-	self.IsVisible      = true
+        background.ZIndex = 100
+        for _, child in ipairs(buttonsFrame:GetChildren()) do
+                if child:IsA("GuiObject") then
+                        child.ZIndex = 101
+                end
+        end
 
-	self.Frame.ZIndex = 50
-	for _, b in ipairs(self.Buttons:GetChildren()) do
-		if b:IsA("GuiObject") then
-			b.ZIndex = 51
-		end
-	end
+        TweenService:Create(background, TweenInfo.new(SLIDE_TIME, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+                Position = finish,
+        }):Play()
 
-	TweenService:Create(self.Frame, TweenInfo.new(SLIDE_TIME, Enum.EasingStyle.Quad), {Position = endPos}):Play()
-	for _, btn in ipairs(self.Buttons:GetChildren()) do
-		if btn:IsA("TextButton") then
-			TweenService:Create(btn, TweenInfo.new(FADE_TIME), {TextTransparency = 0}):Play()
-		end
-	end
+        for _, child in ipairs(buttonsFrame:GetChildren()) do
+                if child:IsA("TextButton") then
+                        TweenService:Create(child, TweenInfo.new(FADE_TIME, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+                                TextTransparency = 0,
+                                BackgroundTransparency = 0,
+                        }):Play()
+                end
+        end
+
+        if not self._inputConnection then
+                self._inputConnection = UserInputService.InputBegan:Connect(function(input: InputObject, gameProcessed: boolean)
+                        if gameProcessed then
+                                return
+                        end
+
+                        if input.UserInputType == Enum.UserInputType.MouseButton1 then
+                                self:Hide()
+                        end
+                end)
+        end
 end
 
--- Hide with slide-up and fade-out
 function Tooltip:Hide()
-	if not self.IsVisible then return end
+        if not self._visible then
+                return
+        end
 
-	self.IsVisible   = false
-	local currentPos = self.Frame.Position
-	local upPos      = UDim2.new(
-		currentPos.X.Scale, currentPos.X.Offset,
-		currentPos.Y.Scale, currentPos.Y.Offset - self.Frame.Size.Y.Offset
-	)
+        self._visible = false
 
-	if self._inputConn then
-		self._inputConn:Disconnect()
-		self._inputConn = nil
-	end
+        if self._inputConnection then
+                self._inputConnection:Disconnect()
+                self._inputConnection = nil
+        end
 
-	TweenService:Create(self.Frame, TweenInfo.new(SLIDE_TIME, Enum.EasingStyle.Quad), {Position = upPos}):Play()
+        local background = assert(self._background, "Tooltip missing background")
+        local buttonsFrame = assert(self._buttonsFrame, "Tooltip missing buttons frame")
+        local upPosition = background.Position - UDim2.fromOffset(0, background.Size.Y.Offset)
 
-	for _, btn in ipairs(self.Buttons:GetChildren()) do
-		if btn:IsA("TextButton") then
-			TweenService:Create(btn, TweenInfo.new(FADE_TIME), {TextTransparency = 1}):Play()
-		end
-	end
+        TweenService:Create(background, TweenInfo.new(SLIDE_TIME, Enum.EasingStyle.Quad, Enum.EasingDirection.In), {
+                Position = upPosition,
+        }):Play()
 
-	delay(math.max(SLIDE_TIME, FADE_TIME), function()
-		self.UI.Enabled = false
-	end)
+        for _, child in ipairs(buttonsFrame:GetChildren()) do
+                if child:IsA("TextButton") then
+                        TweenService:Create(child, TweenInfo.new(FADE_TIME, Enum.EasingStyle.Quad, Enum.EasingDirection.In), {
+                                TextTransparency = 1,
+                                BackgroundTransparency = 1,
+                        }):Play()
+                end
+        end
+
+        task.delay(math.max(SLIDE_TIME, FADE_TIME), function()
+                if not self._visible then
+                        self._gui.Enabled = false
+                        clearButtons(self)
+                end
+        end)
 end
 
-return Tooltip.new()
+function Tooltip:Destroy()
+        self:HideImmediate()
+        self._gui:Destroy()
+        self._buttonsFrame = nil
+        self._template = nil
+        self._background = nil
+end
+
+local defaultInstance: TooltipClass?
+
+local Module = {}
+Module.__index = Module
+
+function Module.new(playerGui: PlayerGui?): TooltipClass
+        return Tooltip.new(playerGui)
+end
+
+function Module.get(): TooltipClass
+        defaultInstance = defaultInstance or Tooltip.new(nil)
+        return defaultInstance
+end
+
+return setmetatable(Module, {
+        __index = function(_, key)
+                return Module.get()[key]
+        end,
+
+        __call = function(_, ...)
+                return Module.new(...)
+        end,
+})
