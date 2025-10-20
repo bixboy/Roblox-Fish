@@ -40,15 +40,35 @@ local function findTemplate(path)
                 return nil
         end
 
-        local current = AssetsFolder
-        for segment in string.gmatch(path, "[^%.]+") do
-                current = current and current:FindFirstChild(segment)
-                if not current then
-                        return AssetsFolder:FindFirstChild(path, true)
+        local function descend(root, parts)
+                local node = root
+                for _, segment in ipairs(parts) do
+                        node = node and node:FindFirstChild(segment)
+                        if not node then
+                                return nil
+                        end
                 end
+                return node
         end
 
-        return current
+        local segments = {}
+        for segment in string.gmatch(path, "[^%.]+") do
+                table.insert(segments, segment)
+        end
+
+        -- Persisted paths still include the "Assets." prefix from placement.
+        -- Try resolving from ReplicatedStorage first, then fall back to the
+        -- assets folder while tolerating the prefix.
+        local fromReplicated = descend(ReplicatedStorage, segments)
+        if fromReplicated then
+                return fromReplicated
+        end
+
+        if segments[1] == "Assets" then
+                table.remove(segments, 1)
+        end
+
+        return descend(AssetsFolder, segments)
 end
 
 local function applyCFrame(instance, cf)
