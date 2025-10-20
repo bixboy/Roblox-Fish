@@ -111,7 +111,7 @@ local function reloadObject(player, plotPart, info)
         clone.Parent = plotPart
         clone:SetAttribute("TemplatePath", info.Path)
         clone:SetAttribute("ObjectId", info.Id)
-        clone:AddTag("Object")
+        CollectionService:AddTag(clone, "Object")
 
         PlotManager:RegisterObjectOwner(player, clone)
 

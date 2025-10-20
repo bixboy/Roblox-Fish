@@ -278,9 +278,9 @@ placeRemote.OnServerInvoke = function(player, objectPath, receivedCFrame)
 	end
 
 	-- 8) finalisation : parent, tags, enregistrement
-	clone.Parent = plotPart
-	clone:SetAttribute("TemplatePath", objectPath)
-	clone:AddTag("Object")
+        clone.Parent = plotPart
+        clone:SetAttribute("TemplatePath", objectPath)
+        CollectionService:AddTag(clone, "Object")
 	
 	PlotManager:AddObject(player, plotPart, clone)
 
