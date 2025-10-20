@@ -318,35 +318,43 @@ end
 
 -- Pose un objet / support
 function PlotManager:AddObject(player, plotPart, clone)
-	
-	local data = userPlots[player.UserId]
-	if not (data and data.HasClaim) then return end
 
-	local cf = clone:IsA("Model") and (clone.PrimaryPart or clone:FindFirstChildWhichIsA("BasePart")).CFrame
-		or (clone:IsA("BasePart") and clone.CFrame)
-	
-	local center = plotPart.Position
-	local ofs = cf.Position - center
-	local rx, ry, rz = cf:ToOrientation()
+        local data = userPlots[player.UserId]
+        if not (data and data.HasClaim) then return end
 
-	local newId = #data.Objects + 1
-	clone:SetAttribute("ObjectId", newId)
-	
-	objectOwners[player.UserId] = objectOwners[player.UserId] or {}
-	objectOwners[player.UserId][newId] = true
+        local cf
+        if clone:IsA("Model") then
+                cf = clone:GetPivot()
+        elseif clone:IsA("BasePart") then
+                cf = clone.CFrame
+        end
 
-	local entry = {
-		Id      = newId,
-		Path    = clone.Name,
-		Offset  = { ofs.X, ofs.Y, ofs.Z },
-		Angles  = { rx, ry, rz },
-	}
+        if not cf then
+                return
+        end
 
-	if CollectionService:HasTag(clone, "Support") then
-		entry.Aquarium = { Path = "", Fish = {} }
-	end
+        local center = plotPart.Position
+        local ofs = cf.Position - center
+        local rx, ry, rz = cf:ToOrientation()
 
-	table.insert(data.Objects, entry)
+        local newId = HttpService:GenerateGUID(false)
+        clone:SetAttribute("ObjectId", newId)
+
+        objectOwners[player.UserId] = objectOwners[player.UserId] or {}
+        objectOwners[player.UserId][newId] = true
+
+        local entry = {
+                Id      = newId,
+                Path    = clone:GetAttribute("TemplatePath") or clone.Name,
+                Offset  = { ofs.X, ofs.Y, ofs.Z },
+                Angles  = { rx, ry, rz },
+        }
+
+        if CollectionService:HasTag(clone, "Support") then
+                entry.Aquarium = { Path = "", Fish = {} }
+        end
+
+        table.insert(data.Objects, entry)
 end
 
 -- Retire un objet du plot
@@ -455,36 +463,36 @@ end
 -- Claim / acces / nettoyage ------------------------------------------------
 
 function PlotManager:ClaimPlot(player, plotPart)
-	
-	if not CollectionService:HasTag(plotPart, "Plot") then
-		
-		return false, "Terrain non revendiquable"
-	end
-	
-	local data = userPlots[player.UserId] or self:Load(player)
-	if data.HasClaim then
-		
-		return false, "Terrain deja revendique"
-	end
-	
-	plotOwners[plotPart] = player.UserId
-	data.HasClaim = true
-	data.PlotPart = plotPart
-	
-	for _, inst in ipairs(plotPart:GetDescendants()) do
-		
-		local objId = inst:GetAttribute("ObjectId")
-		if objId then
-			objectOwners[inst] = player.UserId
-		end
-		
-	end
-	
-	return true
+
+        if not CollectionService:HasTag(plotPart, "Plot") then
+
+                return false, "Terrain non revendiquable"
+        end
+
+        local data = userPlots[player.UserId] or self:Load(player)
+        if data.HasClaim then
+
+                return false, "Terrain deja revendique"
+        end
+
+        plotOwners[plotPart] = player.UserId
+        data.HasClaim = true
+        data.PlotPart = plotPart
+
+        for _, inst in ipairs(plotPart:GetDescendants()) do
+
+                if inst:GetAttribute("ObjectId") then
+                        self:RegisterObjectOwner(player, inst)
+                end
+
+        end
+
+        return true
 end
 
 function PlotManager:GetPlotOf(player)
-	return userPlots[player.UserId].PlotPart or nil
+        local data = userPlots[player.UserId]
+        return data and data.PlotPart or nil
 end
 
 function PlotManager:GetObjects(player)
