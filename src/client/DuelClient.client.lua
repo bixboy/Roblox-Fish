@@ -18,7 +18,6 @@ local DuelUpdate        = Remotes:WaitForChild("DuelUpdate")
 local GetInventory      = Remotes.Parent:WaitForChild("GetInventory")
 
 local UIListManager = require(ReplicatedStorage.Modules:WaitForChild("UIListManager"))
-local CombatData    = require(ReplicatedStorage.Modules:WaitForChild("CombatData"))
 
 
 local duelTemplates = ReplicatedStorage:WaitForChild("UI"):WaitForChild("DuelTemplates")
@@ -237,9 +236,9 @@ local function renderMoveButtons(panel, moves, duelId, isMyTurn)
                 button.Parent = container
                 button:SetAttribute("MoveId", move.Id)
 
-                local typeInfo = move.Type and CombatData.Types[move.Type]
-                if typeInfo and typeInfo.Color then
-                        button.BackgroundColor3 = typeInfo.Color:Lerp(Color3.new(0.1, 0.1, 0.2), 0.4)
+                local typeColor = move.TypeColor
+                if typeColor then
+                        button.BackgroundColor3 = typeColor:Lerp(Color3.new(0.1, 0.1, 0.2), 0.4)
                 else
                         button.BackgroundColor3 = Color3.fromRGB(40, 46, 68)
                 end

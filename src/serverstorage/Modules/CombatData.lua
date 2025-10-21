@@ -1,4 +1,4 @@
--- ReplicatedStorage/Modules/CombatData.lua
+-- ServerStorage/Modules/CombatData.lua
 --
 -- Centralises combat configuration for duel battles.
 -- Designers can tweak fish base stats, learnsets, move power,
@@ -225,22 +225,37 @@ function CombatData.GetMove(moveId)
     return CombatData.Moves[moveId]
 end
 
+function CombatData.GetTypeDefinition(typeId)
+    return CombatData.Types[typeId]
+end
+
+function CombatData.GetTypeColor(typeId)
+    local typeDef = CombatData.GetTypeDefinition(typeId)
+    return typeDef and typeDef.Color or nil
+end
+
+function CombatData.GetTypeDisplayName(typeId)
+    local typeDef = CombatData.GetTypeDefinition(typeId)
+    return (typeDef and typeDef.DisplayName) or typeId
+end
+
 function CombatData.GetTypeMultiplier(moveType, defenderTypes)
     if not moveType then
         return 1
     end
 
+    local multiplier = 1
     local typeRow = CombatData.TypeChart[moveType]
     if not typeRow then
-        return 1
+        return multiplier
     end
 
-    local multiplier = 1
-    for _, t in ipairs(defenderTypes) do
-        if t then
-            local mod = typeRow[t]
-            if mod ~= nil then
-                multiplier *= mod
+    defenderTypes = defenderTypes or {}
+    for _, defType in ipairs(defenderTypes) do
+        if defType then
+            local bonus = typeRow[defType]
+            if bonus then
+                multiplier *= bonus
             end
         end
     end
@@ -254,37 +269,38 @@ function CombatData.GetAvailableMoves(speciesId, level)
         return {}
     end
 
-    local moves = {}
-    for _, entry in ipairs(species.MoveSet or {}) do
-        if level >= (entry.UnlockLevel or 1) then
+    local available = {}
+    local moveSet = species.MoveSet or {}
+
+    for _, entry in ipairs(moveSet) do
+        if level >= entry.UnlockLevel then
             local move = CombatData.GetMove(entry.Move)
             if move then
-                moves[#moves + 1] = {
+                table.insert(available, {
                     Id = entry.Move,
                     Definition = move,
-                }
+                })
             end
         end
     end
 
-    if #moves == 0 then
-        -- Always provide at least one move.
+    if #available == 0 then
         local fallback = CombatData.GetMove("fin_slash")
         if fallback then
-            moves[#moves + 1] = {
+            table.insert(available, {
                 Id = "fin_slash",
                 Definition = fallback,
-            }
+            })
         end
     end
 
-    return moves
+    return available
 end
 
 function CombatData.GetSpeciesDisplayName(speciesId)
     local species = CombatData.GetSpecies(speciesId)
-    if species and species.DisplayName then
-        return species.DisplayName
+    if species then
+        return species.DisplayName or speciesId
     end
     return speciesId
 end

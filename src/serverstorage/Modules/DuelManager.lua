@@ -1,9 +1,8 @@
--- ServerStorage/Modules/DuelManager.lua
---
 -- Server side duel engine responsible for orchestrating Pokemon-like
--- fish battles. Combat data (types, moves, base stats) lives inside
--- ReplicatedStorage.Modules.CombatData so designers can rebalance
--- encounters without touching server logic.
+-- fish battles. Combat data (types, moves, base stats) lives in
+-- ServerStorage.Modules.CombatData so designers can rebalance
+-- encounters without touching server logic and without exposing
+-- sensitive balancing values to clients.
 
 local HttpService = game:GetService("HttpService")
 local Players     = game:GetService("Players")
@@ -11,7 +10,7 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local InventoryManager = require(game.ServerStorage.Modules:WaitForChild("InventoryManager"))
 local FishData         = require(game.ServerStorage.Data:WaitForChild("FishData"))
-local CombatData       = require(ReplicatedStorage.Modules:WaitForChild("CombatData"))
+local CombatData       = require(game.ServerStorage.Modules:WaitForChild("CombatData"))
 
 local DuelUpdate        = ReplicatedStorage.Remotes.Fight:WaitForChild("DuelUpdate")
 
@@ -107,6 +106,7 @@ local function serializeMovesForClient(combatant)
             Id          = move.Id,
             Name        = move.Name,
             Type        = move.Type,
+            TypeColor   = CombatData.GetTypeColor(move.Type),
             Category    = move.Category,
             Power       = move.Power,
             Accuracy    = move.Accuracy,
