@@ -18,12 +18,20 @@ local DuelUpdate        = Remotes:WaitForChild("DuelUpdate")
 local GetInventory      = Remotes.Parent:WaitForChild("GetInventory")
 
 local UIListManager = require(ReplicatedStorage.Modules:WaitForChild("UIListManager"))
+local CombatData    = require(ReplicatedStorage.Modules:WaitForChild("CombatData"))
 
 
 local duelTemplates = ReplicatedStorage:WaitForChild("UI"):WaitForChild("DuelTemplates")
 local duelUi = {}
 local fishSelected = nil
 local activeConnections = {}
+
+local battleState = {
+        duelId = nil,
+        myRole = nil,
+        moveButtons = {},
+        moveConnections = {},
+}
 
 -- =====================================
 -- Helpers
@@ -44,12 +52,26 @@ local function loadAllTemplates()
 end
 
 local function clearConnections()
-	for _, conn in ipairs(activeConnections) do
-		if conn.Connected then
-			conn:Disconnect()
-		end
-	end
-	table.clear(activeConnections)
+        for _, conn in ipairs(activeConnections) do
+                if conn.Connected then
+                        conn:Disconnect()
+                end
+        end
+        table.clear(activeConnections)
+
+        for _, button in ipairs(battleState.moveButtons) do
+                if typeof(button) == "Instance" and button.Destroy then
+                        button:Destroy()
+                end
+        end
+        table.clear(battleState.moveButtons)
+
+        for _, conn in ipairs(battleState.moveConnections) do
+                if conn.Connected then
+                        conn:Disconnect()
+                end
+        end
+        table.clear(battleState.moveConnections)
 end
 
 loadAllTemplates()
@@ -94,30 +116,239 @@ end
 
 local function closeAllDuelUI()
 	
-	for name, ui in pairs(duelUi) do
-		if typeof(ui) == "Instance" then
-			hideTemplate(ui)
-		end
-	end
-	
-	fishSelected = nil
+        for name, ui in pairs(duelUi) do
+                if typeof(ui) == "Instance" then
+                        hideTemplate(ui)
+                end
+        end
+
+        fishSelected = nil
+        battleState.duelId = nil
+        battleState.myRole = nil
+        clearConnections()
 end
 
 local function findDescendant(parent, name)
-	
-	if not parent then
-		return nil end
-	
-	if parent.Name == name then
-		return parent end
-	
-	for _, c in ipairs(parent:GetChildren()) do
-		
-		local f = findDescendant(c, name)
-		if f then return f end
-	end
-	
-	return nil
+
+        if not parent then
+                return nil end
+
+        if parent.Name == name then
+                return parent end
+
+        for _, c in ipairs(parent:GetChildren()) do
+
+                local f = findDescendant(c, name)
+                if f then return f end
+        end
+
+        return nil
+end
+
+local function ensureBattleLog(panel)
+        local label = findDescendant(panel, "BattleLog")
+        if not label then
+                label = Instance.new("TextLabel")
+                label.Name = "BattleLog"
+                label.BackgroundTransparency = 1
+                label.TextColor3 = Color3.new(1, 1, 1)
+                label.TextWrapped = true
+                label.TextXAlignment = Enum.TextXAlignment.Left
+                label.TextYAlignment = Enum.TextYAlignment.Top
+                label.Font = Enum.Font.Gotham
+                label.TextSize = 18
+                label.AnchorPoint = Vector2.new(0, 1)
+                label.Size = UDim2.new(1, -20, 0, 120)
+                label.Position = UDim2.new(0, 10, 1, -200)
+                label.Parent = panel
+        end
+        return label
+end
+
+local function ensureMoveContainer(panel)
+        local container = findDescendant(panel, "MoveContainer")
+        if not container then
+                container = Instance.new("Frame")
+                container.Name = "MoveContainer"
+                container.AnchorPoint = Vector2.new(1, 1)
+                container.Position = UDim2.new(1, -16, 1, -16)
+                container.Size = UDim2.new(0, 280, 0, 180)
+                container.BackgroundTransparency = 0.25
+                container.BackgroundColor3 = Color3.fromRGB(18, 26, 42)
+                container.BorderSizePixel = 0
+                container.Parent = panel
+
+                local layout = Instance.new("UIGridLayout")
+                layout.Name = "Layout"
+                layout.CellPadding = UDim2.new(0, 8, 0, 8)
+                layout.CellSize = UDim2.new(0.5, -8, 0.5, -8)
+                layout.FillDirectionMaxCells = 2
+                layout.HorizontalAlignment = Enum.HorizontalAlignment.Center
+                layout.VerticalAlignment = Enum.VerticalAlignment.Center
+                layout.SortOrder = Enum.SortOrder.LayoutOrder
+                layout.Parent = container
+        end
+        return container
+end
+
+local function updateBattleLog(panel, logLines)
+        if not panel then return end
+        local label = ensureBattleLog(panel)
+
+        if type(logLines) == "string" then
+                label.Text = logLines
+        elseif type(logLines) == "table" then
+                label.Text = table.concat(logLines, "\n")
+        else
+                label.Text = ""
+        end
+end
+
+local function renderMoveButtons(panel, moves, duelId, isMyTurn)
+        local container = ensureMoveContainer(panel)
+
+        for _, conn in ipairs(battleState.moveConnections) do
+                if conn.Connected then
+                        conn:Disconnect()
+                end
+        end
+        table.clear(battleState.moveConnections)
+
+        for _, child in ipairs(container:GetChildren()) do
+                if child:IsA("TextButton") then
+                        child:Destroy()
+                end
+        end
+
+        table.clear(battleState.moveButtons)
+
+        for index, move in ipairs(moves or {}) do
+                local button = Instance.new("TextButton")
+                button.Name = "Move_" .. (move.Id or index)
+                button.LayoutOrder = index
+                button.AutoButtonColor = true
+                button.TextWrapped = true
+                button.Font = Enum.Font.GothamBold
+                button.TextSize = 16
+                button.TextColor3 = Color3.new(1, 1, 1)
+                button.BackgroundTransparency = 0.1
+                button.Size = UDim2.new(0, 0, 0, 0)
+                button.Text = string.format("%s\nPP %d/%d", move.Name or "???", move.PP or 0, move.MaxPP or 0)
+                button.Parent = container
+                button:SetAttribute("MoveId", move.Id)
+
+                local typeInfo = move.Type and CombatData.Types[move.Type]
+                if typeInfo and typeInfo.Color then
+                        button.BackgroundColor3 = typeInfo.Color:Lerp(Color3.new(0.1, 0.1, 0.2), 0.4)
+                else
+                        button.BackgroundColor3 = Color3.fromRGB(40, 46, 68)
+                end
+
+                local descriptionValue = Instance.new("StringValue")
+                descriptionValue.Name = "Description"
+                descriptionValue.Value = move.Description or ""
+                descriptionValue.Parent = button
+
+                button.Active = isMyTurn and (move.PP or 0) > 0
+                button.AutoButtonColor = button.Active
+                button.BackgroundTransparency = button.Active and 0.1 or 0.4
+
+                local connection = button.MouseButton1Click:Connect(function()
+                        if not button.Active then
+                                return
+                        end
+
+                        DuelUpdate:FireServer({
+                                duelId = duelId,
+                                action = "move",
+                                moveId = button:GetAttribute("MoveId"),
+                        })
+
+                        for _, btn in ipairs(battleState.moveButtons) do
+                                if btn:IsA("TextButton") then
+                                        btn.Active = false
+                                        btn.AutoButtonColor = false
+                                end
+                        end
+                end)
+
+                table.insert(battleState.moveConnections, connection)
+
+                table.insert(battleState.moveButtons, button)
+        end
+end
+
+local function isMyTurn(payload)
+        if not battleState.myRole then
+                return false
+        end
+
+        return (payload.currentTurn == "challenger" and battleState.myRole == "challenger")
+                or (payload.currentTurn == "receiver" and battleState.myRole == "receiver")
+end
+
+local function updateTurnIndicator(panel, payload)
+        local turnLabel = findDescendant(panel, "PlayerTurn")
+        if not turnLabel then
+                return
+        end
+
+        if payload.currentTurn == "challenger" then
+                local pl = Players:GetPlayerByUserId(payload.challengerId)
+                turnLabel.Text = ((pl and pl.Name) or "???") .. " joue"
+        elseif payload.currentTurn == "receiver" then
+                local pl = Players:GetPlayerByUserId(payload.receiverId)
+                turnLabel.Text = ((pl and pl.Name) or "???") .. " joue"
+        end
+end
+
+local function renderBattleState(payload)
+        local panel = duelUi.BattleUI
+        if not panel then return end
+
+        local chalStats = payload.challengerStats or payload.challengerFish
+        local recvStats = payload.receiverStats or payload.receiverFish
+
+        if not chalStats or not recvStats then
+                return
+        end
+
+        local leftName = findDescendant(panel, "LeftName")
+        if leftName then
+                local levelText = chalStats.Level and (" Lv." .. tostring(chalStats.Level)) or ""
+                leftName.Text = string.format("%s%s", chalStats.Name or "???", levelText)
+        end
+
+        local rightName = findDescendant(panel, "RightName")
+        if rightName then
+                local levelText = recvStats.Level and (" Lv." .. tostring(recvStats.Level)) or ""
+                rightName.Text = string.format("%s%s", recvStats.Name or "???", levelText)
+        end
+
+        local leftBar = findDescendant(panel, "LeftHPBar")
+        if leftBar and leftBar:FindFirstChild("Fill") and chalStats.MaxHP then
+                leftBar.Fill.Size = UDim2.new(math.clamp(chalStats.HP / chalStats.MaxHP, 0, 1), 0, 1, 0)
+        end
+
+        local rightBar = findDescendant(panel, "RightHPBar")
+        if rightBar and rightBar:FindFirstChild("Fill") and recvStats.MaxHP then
+                rightBar.Fill.Size = UDim2.new(math.clamp(recvStats.HP / recvStats.MaxHP, 0, 1), 0, 1, 0)
+        end
+
+        local passBtn = findDescendant(panel, "PassButton")
+        local myMoves = (battleState.myRole == "challenger") and payload.challengerMoves or payload.receiverMoves
+        local myTurn = isMyTurn(payload)
+
+        renderMoveButtons(panel, myMoves or {}, payload.duelId, myTurn)
+
+        if passBtn then
+                passBtn.Visible = myTurn
+                passBtn.Active = myTurn
+                passBtn.AutoButtonColor = myTurn
+        end
+
+        updateTurnIndicator(panel, payload)
+        updateBattleLog(panel, payload.log)
 end
 
 -- =====================================
@@ -288,32 +519,38 @@ end
 -- =====================================
 -- Battle UI
 -- =====================================
-local function openBattleUI(duelId, challengerFish, receiverFish)
-	
-	local panel = duelUi.BattleUI
-	if not panel then return end
-	
-	clearConnections()
-	showTemplate(panel)
+local function openBattleUI(payload)
 
-	findDescendant(panel,"LeftName").Text  = challengerFish.Type or "???"
-	findDescendant(panel,"RightName").Text = receiverFish.Type or "???"
+        local panel = duelUi.BattleUI
+        if not panel then return end
 
-	local atkBtn = findDescendant(panel,"AttackButton")
-	local passBtn = findDescendant(panel,"PassButton")
+        clearConnections()
+        showTemplate(panel)
 
-	if atkBtn then
-		table.insert(activeConnections, atkBtn.MouseButton1Click:Connect(function()
-			DuelUpdate:FireServer({duelId=duelId, action="attack"})
-		end))
-	end
+        battleState.duelId = payload.duelId
+        battleState.myRole = (player.UserId == payload.challengerId) and "challenger" or "receiver"
 
-	if passBtn then
-		table.insert(activeConnections, passBtn.MouseButton1Click:Connect(function()
-			DuelUpdate:FireServer({duelId=duelId, action="pass"})
-		end))
-	end
-	
+        local atkBtn = findDescendant(panel,"AttackButton")
+        if atkBtn then
+                atkBtn.Visible = false
+                atkBtn.Active = false
+        end
+
+        local passBtn = findDescendant(panel,"PassButton")
+        if passBtn then
+                passBtn.Text = "Repos"
+                table.insert(activeConnections, passBtn.MouseButton1Click:Connect(function()
+                        if not battleState.duelId then return end
+                        DuelUpdate:FireServer({
+                                duelId = battleState.duelId,
+                                action = "pass",
+                        })
+                        passBtn.Active = false
+                        passBtn.AutoButtonColor = false
+                end))
+        end
+
+        renderBattleState(payload)
 end
 
 -- =====================================
@@ -337,123 +574,67 @@ UpdateChallengeUi.OnClientEvent:Connect(function(duelId, opponentInfos)
 end)
 
 DuelUpdate.OnClientEvent:Connect(function(payload)
-	
-	if payload.state == "start" then
-		
-		clearConnections()
-		hideTemplate(duelUi.IncomingChallenge)
-		hideTemplate(duelUi.ResultPanel)
-		openBattleUI(payload.duelId, payload.challengerFish, payload.receiverFish)
-		
-		local panel = duelUi.BattleUI
-		if panel then
-			
-			findDescendant(panel, "LeftHPBar").Fill.Size =
-				UDim2.new(payload.challengerFish.HP / payload.challengerFish.MaxHP, 0, 1, 0)
 
-			findDescendant(panel, "RightHPBar").Fill.Size =
-				UDim2.new(payload.receiverFish.HP / payload.receiverFish.MaxHP, 0, 1, 0)
+        if not payload or not payload.state then
+                return
+        end
 
-			findDescendant(panel, "LeftName").Text =
-				(payload.challengerFish.OrigData and payload.challengerFish.OrigData.Name) or "???"
-			
-			findDescendant(panel, "RightName").Text =
-				(payload.receiverFish.OrigData and payload.receiverFish.OrigData.Name) or "???"
+        if payload.state == "notice" then
+                updateBattleLog(duelUi.BattleUI, payload.message)
+                return
+        end
 
-			local atkBtn  = findDescendant(panel, "AttackButton")
-			local passBtn = findDescendant(panel, "PassButton")
+        if payload.state == "cancel" then
+                closeAllDuelUI()
+                clearConnections()
+                return
+        end
 
-			local isMyTurn =
-				(payload.currentTurn == "challenger" and player.UserId == payload.challengerId)
-				or (payload.currentTurn == "receiver" and player.UserId == payload.receiverId)
+        if payload.state == "start" then
 
-			if atkBtn and passBtn then
-				atkBtn.Visible = isMyTurn
-				passBtn.Visible = isMyTurn
-			end
+                clearConnections()
+                hideTemplate(duelUi.IncomingChallenge)
+                hideTemplate(duelUi.ResultPanel)
+                openBattleUI(payload)
+                return
+        end
 
-			local turnLabel = findDescendant(panel, "PlayerTurn")
-			if turnLabel then
-				
-				if payload.currentTurn == "challenger" then
-					
-					local pl = Players:GetPlayerByUserId(payload.challengerId)
-					turnLabel.Text = (pl and pl.Name or "???") .. " joue"
-				else
-					local pl = Players:GetPlayerByUserId(payload.receiverId)
-					turnLabel.Text = (pl and pl.Name or "???") .. " joue"
-				end
-			end
-		end
-		
-		warn("Duel started!")
-	end
+        if not battleState.duelId or battleState.duelId ~= payload.duelId then
+                return
+        end
 
-	if payload.state == "update" then
-		warn("Duel updated!")
+        if payload.state == "update" then
+                renderBattleState(payload)
+                return
+        end
 
-		local panel = duelUi.BattleUI
-		if panel then
-			local chal = payload.challengerStats
-			local recv = payload.receiverStats
+        if payload.state == "end" then
+                renderBattleState(payload)
+                clearConnections()
 
-			findDescendant(panel, "LeftHPBar").Fill.Size =
-				UDim2.new(chal.HP / chal.MaxHP, 0, 1, 0)
+                local res = duelUi.ResultPanel
+                if res then
+                        showTemplate(res)
+                        local resultLabel = findDescendant(res,"ResultLabel")
+                        if resultLabel then
+                                local winnerName = payload.winner or "???"
+                                resultLabel.Text = winnerName.." a gagné le duel !"
+                        end
 
-			findDescendant(panel, "RightHPBar").Fill.Size =
-				UDim2.new(recv.HP / recv.MaxHP, 0, 1, 0)
+                        local okBtn = findDescendant(res, "OkButton")
+                        if okBtn then
+                                table.insert(activeConnections, okBtn.MouseButton1Click:Connect(function()
+                                        closeAllDuelUI()
+                                        clearConnections()
+                                        fishSelected = nil
+                                end))
+                        end
+                end
 
-			findDescendant(panel, "LeftName").Text =
-				(chal.OrigData and chal.OrigData.Name) or "???"
-
-			findDescendant(panel, "RightName").Text =
-				(recv.OrigData and recv.OrigData.Name) or "???"
-
-			-- Indication de tour
-			local atkBtn = findDescendant(panel, "AttackButton")
-			local passBtn = findDescendant(panel, "PassButton")
-
-			local isMyTurn = 
-				(payload.currentTurn == "challenger" and player.UserId == payload.challengerId)
-				or (payload.currentTurn == "receiver" and player.UserId == payload.receiverId)
-
-			if isMyTurn then
-				if atkBtn then atkBtn.Visible = true end
-				if passBtn then passBtn.Visible = true end
-			else
-				if atkBtn then atkBtn.Visible = false end
-				if passBtn then passBtn.Visible = false end
-			end
-
-			if payload.currentTurn == "challenger" then
-				
-				local pl = Players:GetPlayerByUserId(payload.challengerId)
-				findDescendant(panel, "PlayerTurn").Text = (pl and pl.Name or "???") .. " joue"
-				
-			elseif payload.currentTurn == "receiver" then
-				
-				local pl = Players:GetPlayerByUserId(payload.receiverId)
-				findDescendant(panel, "PlayerTurn").Text = (pl and pl.Name or "???") .. " joue"
-			end
-		end
-	end
-
-	if payload.state == "end" then
-		
-		closeAllDuelUI()
-		clearConnections()
-		
-		local res = duelUi.ResultPanel
-		showTemplate(res)
-		
-		findDescendant(res,"ResultLabel").Text = payload.winner.." a gagn� le duel !"
-		
-		table.insert(activeConnections, findDescendant(res, "OkButton").MouseButton1Click:Connect(function()
-			closeAllDuelUI()
-			clearConnections()
-			fishSelected = nil
-		end))
-	end
+                battleState.duelId = nil
+                battleState.myRole = nil
+                return
+        end
 end)
 
 -- =====================================
