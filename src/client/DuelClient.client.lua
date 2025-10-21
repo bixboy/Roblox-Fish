@@ -532,7 +532,13 @@ local function openBattleUI(payload)
         local screenGui = ensureScreenGui()
         showTemplate(panel)
         UiHider.RestoreUI(hiddenUi)
-        hiddenUi = UiHider.HideOtherUI(screenGui)
+
+        local exemptList = { screenGui }
+        if panel:IsA("ScreenGui") then
+                table.insert(exemptList, panel)
+        end
+
+        hiddenUi = UiHider.HideOtherUI(exemptList)
 
         battleState.duelId = payload.duelId
         battleState.myRole = (player.UserId == payload.challengerId) and "challenger" or "receiver"
