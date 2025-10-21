@@ -18,12 +18,14 @@ local DuelUpdate        = Remotes:WaitForChild("DuelUpdate")
 local GetInventory      = Remotes.Parent:WaitForChild("GetInventory")
 
 local UIListManager = require(ReplicatedStorage.Modules:WaitForChild("UIListManager"))
+local UiHider = require(ReplicatedStorage.Modules:WaitForChild("UiHider"))
 
 
 local duelTemplates = ReplicatedStorage:WaitForChild("UI"):WaitForChild("DuelTemplates")
 local duelUi = {}
 local fishSelected = nil
 local activeConnections = {}
+local hiddenUi = nil
 
 local battleState = {
         duelId = nil,
@@ -101,20 +103,20 @@ local function showTemplate(inst)
 end
 
 local function hideTemplate(inst)
-	
-	if not inst then
-		return end
-	
-	if inst:IsA("ScreenGui") then
-		inst.Enabled = false
-	else
-		inst.Visible = false
-		inst.Parent = nil
-	end
+
+        if not inst then
+                return end
+
+        if inst:IsA("ScreenGui") then
+                inst.Enabled = false
+        else
+                inst.Visible = false
+                inst.Parent = nil
+        end
 end
 
 local function closeAllDuelUI()
-	
+
         for name, ui in pairs(duelUi) do
                 if typeof(ui) == "Instance" then
                         hideTemplate(ui)
@@ -125,6 +127,8 @@ local function closeAllDuelUI()
         battleState.duelId = nil
         battleState.myRole = nil
         clearConnections()
+        UiHider.RestoreUI(hiddenUi)
+        hiddenUi = nil
 end
 
 local function findDescendant(parent, name)
@@ -524,7 +528,17 @@ local function openBattleUI(payload)
         if not panel then return end
 
         clearConnections()
+
+        local screenGui = ensureScreenGui()
         showTemplate(panel)
+        UiHider.RestoreUI(hiddenUi)
+
+        local exemptList = { screenGui }
+        if panel:IsA("ScreenGui") then
+                table.insert(exemptList, panel)
+        end
+
+        hiddenUi = UiHider.HideOtherUI(exemptList)
 
         battleState.duelId = payload.duelId
         battleState.myRole = (player.UserId == payload.challengerId) and "challenger" or "receiver"

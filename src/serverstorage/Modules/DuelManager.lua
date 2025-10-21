@@ -300,14 +300,33 @@ end
 local function finalizeDuel(duel, winnerPlayer, loserPlayer)
     local stakes = duel.stakes or {}
 
+    local winnerId = winnerPlayer and winnerPlayer.UserId or nil
+    local loserId = loserPlayer and loserPlayer.UserId or nil
+
+    if not loserId and winnerId then
+        if winnerId == duel.challengerId then
+            loserId = duel.targetId
+        elseif winnerId == duel.targetId then
+            loserId = duel.challengerId
+        end
+    end
+
+    local function awardFish(targetPlayer, fishData)
+        local ok, err = InventoryManager:AddFish(targetPlayer, fishData)
+        if not ok then
+            warn("DuelManager: failed to award fish:", err)
+        end
+    end
+
     for _, key in ipairs({ "challenger", "target" }) do
         local stake = stakes[key]
         if stake and stake.fishData then
-            local ownerPlayer = Players:GetPlayerByUserId(stake.owner)
-            if ownerPlayer then
-                local ok, err = InventoryManager:AddFish(ownerPlayer, stake.fishData)
-                if not ok then
-                    warn("DuelManager: failed to restore fish:", err)
+            if winnerPlayer and (stake.owner == winnerId or (loserId and stake.owner == loserId)) then
+                awardFish(winnerPlayer, stake.fishData)
+            else
+                local ownerPlayer = Players:GetPlayerByUserId(stake.owner)
+                if ownerPlayer then
+                    awardFish(ownerPlayer, stake.fishData)
                 end
             end
         end
@@ -317,6 +336,73 @@ local function finalizeDuel(duel, winnerPlayer, loserPlayer)
         duel.endCallBack(duel.id)
     end
     activeDuels[duel.id] = nil
+end
+
+function DuelManager:ForfeitDuel(duelId, forfeitingPlayer)
+    local duel = activeDuels[duelId]
+    if not duel then
+        return false, "duel not found"
+    end
+
+    if duel.state ~= "active" then
+        return false, "duel not active"
+    end
+
+    local forfeiterPlayer
+    local forfeiterId
+
+    if typeof(forfeitingPlayer) == "Instance" and forfeitingPlayer:IsA("Player") then
+        forfeiterPlayer = forfeitingPlayer
+        forfeiterId = forfeitingPlayer.UserId
+    elseif typeof(forfeitingPlayer) == "number" then
+        forfeiterId = forfeitingPlayer
+        forfeiterPlayer = Players:GetPlayerByUserId(forfeiterId)
+    else
+        return false, "invalid forfeiting player"
+    end
+
+    local winnerId
+    if forfeiterId == duel.challengerId then
+        winnerId = duel.targetId
+    elseif forfeiterId == duel.targetId then
+        winnerId = duel.challengerId
+    else
+        return false, "player not in duel"
+    end
+
+    local winnerPlayer = Players:GetPlayerByUserId(winnerId)
+
+    duel.state = "finished"
+
+    local forfeiterName
+    if forfeiterPlayer then
+        forfeiterName = forfeiterPlayer.Name
+    else
+        local forfeiterCombatant = duel.combatants and duel.combatants[forfeiterId]
+        forfeiterName = (forfeiterCombatant and forfeiterCombatant.DisplayName) or "Un adversaire"
+    end
+
+    local winnerName
+    if winnerPlayer then
+        winnerName = winnerPlayer.Name
+    else
+        local winnerCombatant = duel.combatants and duel.combatants[winnerId]
+        winnerName = (winnerCombatant and winnerCombatant.DisplayName) or "Votre adversaire"
+    end
+
+    if duel.combatants and duel.combatants[duel.challengerId] and duel.combatants[duel.targetId] then
+        pushUpdateToPlayers(duel, "end", {
+            log = {
+                string.format("%s abandonne le combat !", forfeiterName),
+                string.format("%s remporte la victoire par forfait.", winnerName),
+            },
+            winner = winnerName,
+        })
+    end
+
+    finalizeDuel(duel, winnerPlayer, forfeiterPlayer)
+
+    return true
 end
 
 function DuelManager:CreateChallenge(challenger, target, callBack)
