@@ -75,6 +75,16 @@ local function cloneEggEntry(entry)
     }
 end
 
+local function roundNumber(value, decimals)
+    if typeof(value) ~= "number" then
+        return value
+    end
+
+    local precision = decimals or 0
+    local factor = 10 ^ precision
+    return math.floor(value * factor + 0.5) / factor
+end
+
 local function compressItems(items: {InventoryEntry})
     local stacked, counts = {}, {}
 
@@ -84,28 +94,53 @@ local function compressItems(items: {InventoryEntry})
         if kind == EntryKind.CatalogItem then
             counts[entry] = (counts[entry] or 0) + 1
         elseif kind == EntryKind.Egg then
-            table.insert(stacked, {
-                Egg   = true,
-                Type  = entry.Type,
-                Hatch = entry.Hatch,
-                Id    = entry.Id,
-            })
+            local eggEntry = {
+                e = true,
+                t = entry.Type,
+            }
+
+            if entry.Id then
+                eggEntry.i = entry.Id
+            end
+
+            if entry.Hatch and entry.Hatch ~= 0 then
+                eggEntry.h = roundNumber(entry.Hatch, 2)
+            end
+
+            table.insert(stacked, eggEntry)
         elseif kind == EntryKind.Fish then
-            table.insert(stacked, {
-                Type     = entry.Type,
-                Hunger   = entry.Hunger,
-                Growth   = entry.Growth,
-                IsMature = entry.IsMature,
-                Rarity   = entry.Rarity,
-                Id       = entry.Id,
-            })
+            local fishEntry = {
+                t = entry.Type,
+            }
+
+            if entry.Id then
+                fishEntry.i = entry.Id
+            end
+
+            if entry.Hunger and entry.Hunger ~= 0 then
+                fishEntry.h = roundNumber(entry.Hunger, 2)
+            end
+
+            if entry.Growth and entry.Growth ~= 0 then
+                fishEntry.g = roundNumber(entry.Growth, 2)
+            end
+
+            if entry.IsMature then
+                fishEntry.m = 1
+            end
+
+            if entry.Rarity then
+                fishEntry.r = entry.Rarity
+            end
+
+            table.insert(stacked, fishEntry)
         end
     end
 
     for itemId, count in pairs(counts) do
         table.insert(stacked, {
-            Id    = itemId,
-            Count = count,
+            i = itemId,
+            c = count,
         })
     end
 
@@ -121,20 +156,35 @@ local function expandItems(items)
             continue
         end
 
-        if entry.Id and entry.Count then
-            for _ = 1, entry.Count do
-                table.insert(expanded, entry.Id)
+        local itemId = entry.i or entry.Id
+        local itemCount = entry.c or entry.Count
+
+        if itemId and itemCount then
+            for _ = 1, itemCount do
+                table.insert(expanded, itemId)
             end
             continue
         end
 
-        if entry.Egg then
-            table.insert(expanded, cloneEggEntry(entry))
+        if entry.Egg or entry.e then
+            table.insert(expanded, cloneEggEntry({
+                Id    = entry.i or entry.Id,
+                Type  = entry.t or entry.Type,
+                Egg   = true,
+                Hatch = entry.h or entry.Hatch,
+            }))
             continue
         end
 
-        if entry.Type then
-            table.insert(expanded, cloneFishEntry(entry))
+        if entry.Type or entry.t then
+            table.insert(expanded, cloneFishEntry({
+                Id       = entry.i or entry.Id,
+                Type     = entry.t or entry.Type,
+                Hunger   = entry.h or entry.Hunger,
+                Growth   = entry.g or entry.Growth,
+                IsMature = entry.m == 1 or entry.IsMature,
+                Rarity   = entry.r or entry.Rarity,
+            }))
             continue
         end
     end
