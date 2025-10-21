@@ -218,13 +218,19 @@ end)
 
 
 DuelUpdate.OnServerEvent:Connect(function(player, payload)
-	
-	local duelId = payload.duelId
-	local action = payload.action
-	if not duelId or not action then
-		return end
-	
-	warn(action)
 
-	DuelManager:TakeTurn(duelId, player, action)
+        if typeof(payload) ~= "table" then
+                return
+        end
+
+        local duelId = payload.duelId
+        local actionType = payload.action
+        if not duelId or not actionType then
+                return
+        end
+
+        local actionPayload = table.clone(payload)
+        actionPayload.duelId = nil
+
+        DuelManager:TakeTurn(duelId, player, actionPayload)
 end)
