@@ -24,12 +24,12 @@ local function round(n, d)
 end
 
 local function findObjectEntry(userData, supportId)
-	for _, obj in ipairs(userData.Objects) do
-		if obj.Id == supportId then
-			return obj
-		end
-	end
-	return nil
+        for _, obj in ipairs(userData.Objects) do
+                if obj.Id == supportId then
+                        return obj
+                end
+        end
+        return nil
 end
 
 -- Simule la croissance hors-ligne
@@ -103,19 +103,24 @@ function PlotManager:Load(player)
 					end
 					
 					local eggList = {}
-					if o.q.e then
-						for _, e in ipairs(o.q.e) do
-							
-							local newId = HttpService:GenerateGUID(false)
-							table.insert(eggList, {
-								Type  = e.n,
-								Hatch = e.h,
-								Id    = newId
-							})
-						end
-					end
+                                        if o.q.e then
+                                                for _, e in ipairs(o.q.e) do
 
-					entry.Aquarium = {
+                                                        local newId = HttpService:GenerateGUID(false)
+                                                        local hatchValue = 0
+                                                        if type(e.h) == "number" then
+                                                                hatchValue = e.h
+                                                        end
+
+                                                        table.insert(eggList, {
+                                                                Type  = e.n,
+                                                                Hatch = hatchValue,
+                                                                Id    = newId
+                                                        })
+                                                end
+                                        end
+
+                        entry.Aquarium = {
 						Path      = o.q.p,
 						Fish      = fishList,
 						Furniture = furnList,
@@ -153,47 +158,122 @@ function PlotManager:Save(player)
 	local data = userPlots[player.UserId]
 	if not data then return end
 
-	local compact = { L = data.LastLogout, O = {} }
-	for _, obj in ipairs(data.Objects) do
-		
-		local o = { p = obj.Path, o = obj.Offset, a = obj.Angles, i = obj.Id }
-		if obj.Aquarium then
-			
-			local ftab = {}
-			for _, f in ipairs(obj.Aquarium.Fish) do
-				
-				local fish = { t = f.Type }
-				if f.Hunger  and f.Hunger  ~= FishData[f.Type].MaxHunger then fish.h = round(f.Hunger,1) end
-				if f.Growth  and f.Growth  > 0 then fish.g = round(f.Growth,1) end
-				if f.IsMature then fish.m = 1 end
-				if f.Rarity  and f.Rarity  ~= FishData[f.Type].Rarity then fish.r = f.Rarity end
-				
-				table.insert(ftab, fish)
-			end
+        local compact = { L = data.LastLogout, O = {} }
+        for _, obj in ipairs(data.Objects) do
 
-			local utab = {}
-			if obj.Aquarium.Furniture then
-				for _, u in ipairs(obj.Aquarium.Furniture) do
-					table.insert(utab, { n = u.Name, s = u.Slot })
-				end
-			end
+                local o = { p = obj.Path, i = obj.Id }
 
-			local etab = {}
-			if obj.Aquarium.Eggs then
-				for _, e in ipairs(obj.Aquarium.Eggs) do
-					table.insert(etab, { n = e.Name, h = e.Hatch })
-				end
-			end
+                if type(obj.Offset) == "table" then
+                        local offset = {}
+                        local hasOffset = false
 
-			o.q = {
-				p = obj.Aquarium.Path,
-				f = ftab,
-				u = utab,
-				e = etab,
-			}
-		end
-		table.insert(compact.O, o)
-	end
+                        for idx, value in ipairs(obj.Offset) do
+                                local rounded = round(value, 3)
+                                offset[idx] = rounded
+                                if rounded ~= 0 then
+                                        hasOffset = true
+                                end
+                        end
+
+                        if hasOffset then
+                                o.o = offset
+                        end
+                end
+
+                if type(obj.Angles) == "table" then
+                        local angles = {}
+                        local hasAngles = false
+
+                        for idx, value in ipairs(obj.Angles) do
+                                local rounded = round(value, 3)
+                                angles[idx] = rounded
+                                if rounded ~= 0 then
+                                        hasAngles = true
+                                end
+                        end
+
+                        if hasAngles then
+                                o.a = angles
+                        end
+                end
+
+                if obj.Aquarium then
+
+                        local aquarium = obj.Aquarium
+                        local q = {}
+                        local hasAquariumData = false
+
+                        if aquarium.Path and aquarium.Path ~= "" then
+                                q.p = aquarium.Path
+                                hasAquariumData = true
+                        end
+
+                        if type(aquarium.Fish) == "table" and #aquarium.Fish > 0 then
+                                local ftab = {}
+                                for _, f in ipairs(aquarium.Fish) do
+
+                                        local fish = { t = f.Type }
+                                        local fishDefaults = FishData[f.Type]
+
+                                        if f.Hunger and fishDefaults and f.Hunger ~= fishDefaults.MaxHunger then
+                                                fish.h = round(f.Hunger, 1)
+                                        end
+
+                                        if f.Growth and f.Growth > 0 then
+                                                fish.g = round(f.Growth, 1)
+                                        end
+
+                                        if f.IsMature then
+                                                fish.m = 1
+                                        end
+
+                                        if f.Rarity and fishDefaults and f.Rarity ~= fishDefaults.Rarity then
+                                                fish.r = f.Rarity
+                                        end
+
+                                        table.insert(ftab, fish)
+                                end
+
+                                if #ftab > 0 then
+                                        q.f = ftab
+                                        hasAquariumData = true
+                                end
+                        end
+
+                        if type(aquarium.Furniture) == "table" and #aquarium.Furniture > 0 then
+                                local utab = {}
+                                for _, u in ipairs(aquarium.Furniture) do
+                                        table.insert(utab, { n = u.Name, s = u.Slot })
+                                end
+
+                                if #utab > 0 then
+                                        q.u = utab
+                                        hasAquariumData = true
+                                end
+                        end
+
+                        if type(aquarium.Eggs) == "table" and #aquarium.Eggs > 0 then
+                                local etab = {}
+                                for _, e in ipairs(aquarium.Eggs) do
+                                        local egg = { n = e.Name }
+                                        if type(e.Hatch) == "number" and e.Hatch > 0 then
+                                                egg.h = math.floor(e.Hatch)
+                                        end
+                                        table.insert(etab, egg)
+                                end
+
+                                if #etab > 0 then
+                                        q.e = etab
+                                        hasAquariumData = true
+                                end
+                        end
+
+                        if hasAquariumData then
+                                o.q = q
+                        end
+                end
+                table.insert(compact.O, o)
+        end
 
 	pcall(function()
 		PLOTS_DS:SetAsync(keyOf(player.UserId), HttpService:JSONEncode(compact))
