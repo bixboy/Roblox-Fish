@@ -205,15 +205,33 @@ end
 
 -- Nettoyage si un joueur quitte
 Players.PlayerRemoving:Connect(function(pl)
-	
-	for duelId, duel in pairs(ActiveDuels) do
-		
-		if duel.challenger == pl or duel.receiver == pl then
-			
-			sendToBoth(duel, DuelUpdate, {duelId = duelId, state = "cancel"})
-			clearDuel(duelId)
-		end
-	end
+
+        local relatedDuels = {}
+
+        for duelId, duel in pairs(ActiveDuels) do
+
+                if duel.challenger == pl or duel.receiver == pl then
+                        table.insert(relatedDuels, { id = duelId, data = duel })
+                end
+        end
+
+        for _, entry in ipairs(relatedDuels) do
+                local duelId = entry.id
+                local duel = entry.data
+
+                if duel.started then
+                        local ok, err = DuelManager:ForfeitDuel(duelId, pl)
+
+                        if not ok then
+                                warn("Failed to forfeit duel", duelId, err)
+                                sendToBoth(duel, DuelUpdate, {duelId = duelId, state = "cancel"})
+                                clearDuel(duelId)
+                        end
+                else
+                        sendToBoth(duel, DuelUpdate, {duelId = duelId, state = "cancel"})
+                        clearDuel(duelId)
+                end
+        end
 end)
 
 
