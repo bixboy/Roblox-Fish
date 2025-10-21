@@ -169,7 +169,6 @@ local function createPrompt(prompt, inputType, gui)
 			if input.UserInputType == Enum.UserInputType.Touch or input.UserInputType == Enum.UserInputType.MouseButton1  then
 				
 				if buttonDown then
-					
 					buttonDown = false
 					prompt:InputHoldEnd()
 				end
