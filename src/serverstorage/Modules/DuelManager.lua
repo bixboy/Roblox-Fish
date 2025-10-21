@@ -300,14 +300,33 @@ end
 local function finalizeDuel(duel, winnerPlayer, loserPlayer)
     local stakes = duel.stakes or {}
 
+    local winnerId = winnerPlayer and winnerPlayer.UserId or nil
+    local loserId = loserPlayer and loserPlayer.UserId or nil
+
+    if not loserId and winnerId then
+        if winnerId == duel.challengerId then
+            loserId = duel.targetId
+        elseif winnerId == duel.targetId then
+            loserId = duel.challengerId
+        end
+    end
+
+    local function awardFish(targetPlayer, fishData)
+        local ok, err = InventoryManager:AddFish(targetPlayer, fishData)
+        if not ok then
+            warn("DuelManager: failed to award fish:", err)
+        end
+    end
+
     for _, key in ipairs({ "challenger", "target" }) do
         local stake = stakes[key]
         if stake and stake.fishData then
-            local ownerPlayer = Players:GetPlayerByUserId(stake.owner)
-            if ownerPlayer then
-                local ok, err = InventoryManager:AddFish(ownerPlayer, stake.fishData)
-                if not ok then
-                    warn("DuelManager: failed to restore fish:", err)
+            if winnerPlayer and (stake.owner == winnerId or (loserId and stake.owner == loserId)) then
+                awardFish(winnerPlayer, stake.fishData)
+            else
+                local ownerPlayer = Players:GetPlayerByUserId(stake.owner)
+                if ownerPlayer then
+                    awardFish(ownerPlayer, stake.fishData)
                 end
             end
         end

@@ -24,6 +24,7 @@ local duelTemplates = ReplicatedStorage:WaitForChild("UI"):WaitForChild("DuelTem
 local duelUi = {}
 local fishSelected = nil
 local activeConnections = {}
+local suppressedUi = {}
 
 local battleState = {
         duelId = nil,
@@ -101,20 +102,73 @@ local function showTemplate(inst)
 end
 
 local function hideTemplate(inst)
-	
-	if not inst then
-		return end
-	
-	if inst:IsA("ScreenGui") then
-		inst.Enabled = false
-	else
-		inst.Visible = false
-		inst.Parent = nil
-	end
+
+        if not inst then
+                return end
+
+        if inst:IsA("ScreenGui") then
+                inst.Enabled = false
+        else
+                inst.Visible = false
+                inst.Parent = nil
+        end
+end
+
+local function setInstanceVisibility(inst, isVisible)
+
+        if inst:IsA("LayerCollector") then
+                inst.Enabled = isVisible
+                return true
+        elseif inst:IsA("GuiObject") then
+                inst.Visible = isVisible
+                return true
+        end
+
+        return false
+end
+
+local function getInstanceVisibility(inst)
+
+        if inst:IsA("LayerCollector") then
+                return inst.Enabled
+        elseif inst:IsA("GuiObject") then
+                return inst.Visible
+        end
+
+        return nil
+end
+
+local function suppressOtherUi()
+
+        local playerGui = player:FindFirstChild("PlayerGui")
+        if not playerGui then
+                return
+        end
+
+        for _, child in ipairs(playerGui:GetChildren()) do
+                if child ~= duelUi.ScreenGui then
+                        local wasVisible = getInstanceVisibility(child)
+                        if wasVisible then
+                                suppressedUi[child] = wasVisible
+                                setInstanceVisibility(child, false)
+                        end
+                end
+        end
+end
+
+local function restoreSuppressedUi()
+
+        for inst, wasVisible in pairs(suppressedUi) do
+                if inst.Parent then
+                        setInstanceVisibility(inst, wasVisible)
+                end
+        end
+
+        table.clear(suppressedUi)
 end
 
 local function closeAllDuelUI()
-	
+
         for name, ui in pairs(duelUi) do
                 if typeof(ui) == "Instance" then
                         hideTemplate(ui)
@@ -125,6 +179,7 @@ local function closeAllDuelUI()
         battleState.duelId = nil
         battleState.myRole = nil
         clearConnections()
+        restoreSuppressedUi()
 end
 
 local function findDescendant(parent, name)
@@ -525,6 +580,7 @@ local function openBattleUI(payload)
 
         clearConnections()
         showTemplate(panel)
+        suppressOtherUi()
 
         battleState.duelId = payload.duelId
         battleState.myRole = (player.UserId == payload.challengerId) and "challenger" or "receiver"
