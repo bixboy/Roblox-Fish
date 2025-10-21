@@ -152,14 +152,34 @@ local function onPromptTriggered(player, plotPart)
 end
 
 
+local function findPromptHost(instance)
+    if instance:IsA("BasePart") then
+        return instance
+    end
+
+    if instance:IsA("Model") then
+        return instance.PrimaryPart or instance:FindFirstChildWhichIsA("BasePart")
+    end
+
+    return instance
+end
+
 local function bindPrompt(plotPart)
 
-    local promptParent = plotPart:FindFirstChild("PromptPart")
+    local promptParent = findPromptHost(plotPart:FindFirstChild("PromptPart") or plotPart)
+    if not promptParent or not promptParent:IsA("BasePart") then
+        warn(("[PlotController] Impossible de lier le prompt pour %s"):format(plotPart:GetFullName()))
+        return
+    end
+
     local prompt = promptParent:FindFirstChildOfClass("ProximityPrompt")
 
     if not prompt then
         prompt = Instance.new("ProximityPrompt")
-        prompt.Parent = plotPart
+        prompt.RequiresLineOfSight = false
+        prompt.Parent = promptParent
+    elseif prompt.Parent ~= promptParent then
+        prompt.Parent = promptParent
     end
 
     prompt.ActionText            = PROMPT_CONFIG.ActionText
