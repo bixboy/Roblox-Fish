@@ -127,45 +127,63 @@ local function reloadObject(player, plotPart, info)
 end
 
 local function onPromptTriggered(player, plotPart)
-        local ok, err = PlotManager:ClaimPlot(player, plotPart)
-        if not ok then
-                warn(("%s n'a pas pu revendiquer %s : %s"):format(player.Name, plotPart.Name, err))
-                return
-        end
 
-        for _, info in ipairs(PlotManager:GetObjects(player)) do
-                reloadObject(player, plotPart, info)
-        end
+    if not CollectionService:HasTag(plotPart, "Plot") and plotPart.Parent then
+        plotPart = plotPart.Parent
+    end
+
+    print("[DEBUG] Claim triggered by", player.Name, "for", plotPart.Name)
+
+    local ok, err = PlotManager:ClaimPlot(player, plotPart)
+    if not ok then
+        warn(("%s n'a pas pu revendiquer %s : %s"):format(player.Name, plotPart.Name, err))
+        return
+    end
+
+    local objects = PlotManager:GetObjects(player)
+    if not objects then
+        warn("[PlotController] Aucun objet à recharger pour", player.Name)
+        return
+    end
+
+    for _, info in ipairs(objects) do
+        reloadObject(player, plotPart, info)
+    end
 end
 
+
 local function bindPrompt(plotPart)
-        local promptParent = plotPart:FindFirstChild("PromptPart") or plotPart
-        local prompt = promptParent:FindFirstChildOfClass("ProximityPrompt")
-        if not prompt then
-                prompt = Instance.new("ProximityPrompt")
-                prompt.Parent = promptParent
-        end
 
-        prompt.ActionText            = PROMPT_CONFIG.ActionText
-        prompt.ObjectText            = PROMPT_CONFIG.ObjectText
-        prompt.HoldDuration          = PROMPT_CONFIG.HoldDuration
-        prompt.MaxActivationDistance = PROMPT_CONFIG.MaxActivationDistance
+    local promptParent = plotPart:FindFirstChild("PromptPart")
+    local prompt = promptParent:FindFirstChildOfClass("ProximityPrompt")
 
-        if not prompt:GetAttribute("__PlotBound") then
-                prompt:SetAttribute("__PlotBound", true)
-                prompt.Triggered:Connect(function(player)
-                        onPromptTriggered(player, plotPart)
-                end)
-        end
+    if not prompt then
+        prompt = Instance.new("ProximityPrompt")
+        prompt.Parent = plotPart
+    end
+
+    prompt.ActionText            = PROMPT_CONFIG.ActionText
+    prompt.ObjectText            = PROMPT_CONFIG.ObjectText
+    prompt.HoldDuration          = PROMPT_CONFIG.HoldDuration
+    prompt.MaxActivationDistance = PROMPT_CONFIG.MaxActivationDistance
+
+    if not prompt:GetAttribute("__PlotBound") then
+        prompt:SetAttribute("__PlotBound", true)
+
+        prompt.Triggered:Connect(function(player)
+            onPromptTriggered(player, plotPart)
+        end)
+    end
 end
 
 for _, plotPart in ipairs(CollectionService:GetTagged("Plot")) do
-        bindPrompt(plotPart)
+    bindPrompt(plotPart)
 end
 
 CollectionService:GetInstanceAddedSignal("Plot"):Connect(bindPrompt)
 
 local IsMyPlotRF = Remotes:WaitForChild("IsMyPlotAt")
+
 IsMyPlotRF.OnServerInvoke = function(player, worldPos)
-        return PlotManager:PlayerOwnsPlotAt(player, worldPos)
+    return PlotManager:PlayerOwnsPlotAt(player, worldPos)
 end
