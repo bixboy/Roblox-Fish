@@ -1,5 +1,6 @@
 -- ServerStorage/Modules/AquariumInstance.lua
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local HttpService       = game:GetService("HttpService")
 local CollectionService = game:GetService("CollectionService")
 local ServerStorage     = game:GetService("ServerStorage")
 local Players           = game:GetService("Players")
@@ -232,30 +233,32 @@ end
 function AquariumInstance:Tick(dt)
 	
 	-- Gestion des oeufs
-	for eggId, egg in pairs(self._eggsData) do
-		
-		egg.Hatch += dt  
-		if egg.Hatch >= egg.MaxHatchTime then
+        for eggId, egg in pairs(self._eggsData) do
 
-			local stats = FishData[egg.Type]
-			if stats then
-				self:PlaceFish({
-					Id       = "Fish_" .. tostring(self._nextFishId + 1),
-					Type     = egg.Type,
-					Hunger   = stats.MaxHunger,
-					Growth   = 0,
-					IsMature = false,
-					Rarity   = stats.Rarity
-				})
-			end
+                egg.Hatch += dt
+                if egg.Hatch >= egg.MaxHatchTime then
 
-			if egg.Instance then 
-				egg.Instance:Destroy() 
-			end
-			
-			self._eggsData[eggId] = nil
-		end
-	end
+                        local stats = FishData[egg.Type]
+                        if stats then
+                                local newFishId = "Fish_" .. HttpService:GenerateGUID(false)
+                                self:PlaceFish({
+                                        Id       = newFishId,
+                                        Type     = egg.Type,
+                                        Hunger   = stats.MaxHunger,
+                                        Growth   = 0,
+                                        IsMature = false,
+                                        Rarity   = stats.Rarity
+                                })
+                        end
+
+                        if egg.Instance then
+                                egg.Instance:Destroy()
+                        end
+
+                        self._eggsData[eggId] = nil
+                        PlotManager:RemoveEggFromSupport(self.OwnerUserId, self.Model.Parent, eggId)
+                end
+        end
 
 	-- Gestion des poissons
 	for fishId, fish in pairs(self._fishData) do

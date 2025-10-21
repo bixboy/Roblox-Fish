@@ -139,12 +139,28 @@ function AquariumManager:Tick(dt)
 end
 
 RunService.Heartbeat:Connect(function(dt)
-	for _, manager in pairs(activeManagers) do
-		local model = manager.Model
-		if model:GetAttribute("AquariumId") and next(getFishMap(model)) then
-			manager:Tick(dt)
-		end
-	end
+        for model, manager in pairs(activeManagers) do
+                if not model:GetAttribute("AquariumId") then
+                        continue
+                end
+
+                local shouldTick = false
+                local instance = activeInstances[model] or manager._instance
+
+                if instance then
+                        if next(instance._fishData) or next(instance._eggsData) then
+                                shouldTick = true
+                        end
+                end
+
+                if not shouldTick and next(getFishMap(model)) then
+                        shouldTick = true
+                end
+
+                if shouldTick then
+                        manager:Tick(dt)
+                end
+        end
 end)
 
 -- ============================================================
